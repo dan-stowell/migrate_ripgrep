@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/bazelbuild/rules_go/go/runfiles"
 )
 
 var model = flag.String("model", "openrouter/google/gemini-2.5-flash", "The LLM model to use for testing")
@@ -28,6 +30,12 @@ var targets = []string{
 
 func TestMigrate(t *testing.T) {
 	flag.Parse()
+
+	aiderBin, err := runfiles.Rlocation("_main/aider")
+	if err != nil {
+		t.Fatal(err)
+	}
+	log.Printf("aider path: %s", aiderBin)
 
 	// Create a temporary directory for the git clone
 	tempDir, err := os.MkdirTemp("", "ripgrep-test-")

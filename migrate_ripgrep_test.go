@@ -155,7 +155,8 @@ func gitDiff(dir string) (string, error) {
 	return runCombined(dir, "git", "diff")
 }
 
-func TestMigrate(t *testing.T) {
+func setupTestMigrate(t *testing.T) (aiderBin, tempDir, aiderTempDir string) {
+	t.Helper()
 	flag.Parse()
 
 	aiderBin, err := runfiles.Rlocation("_main/aider")
@@ -165,17 +166,17 @@ func TestMigrate(t *testing.T) {
 	log.Printf("aider path: %s", aiderBin)
 
 	// Create a temporary directory for the git clone
-	tempDir, err := os.MkdirTemp("", "ripgrep-test-")
+	tempDir, err = os.MkdirTemp("", "ripgrep-test-")
 	if err != nil {
 		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
-	defer os.RemoveAll(tempDir) // Clean up the temporary directory
+	t.Cleanup(func() { os.RemoveAll(tempDir) }) // Clean up the temporary directory
 
-	aiderTempDir, err := os.MkdirTemp("", "aider-test-home-")
+	aiderTempDir, err = os.MkdirTemp("", "aider-test-home-")
 	if err != nil {
 		t.Fatalf("Failed to create temporary directory for aider home: %v", err)
 	}
-	defer os.RemoveAll(aiderTempDir) // Clean up the aider temporary directory
+	t.Cleanup(func() { os.RemoveAll(aiderTempDir) }) // Clean up the aider temporary directory
 
 	repoURL := "https://github.com/dan-stowell/ripgrep"
 	log.Printf("Cloning %s into %s", repoURL, tempDir)
@@ -203,6 +204,12 @@ func TestMigrate(t *testing.T) {
 		t.Fatalf("Failed to checkout branch %s: %v", branchName, err)
 	}
 	log.Printf("Completed git checkout %s", branchName)
+
+	return aiderBin, tempDir, aiderTempDir
+}
+
+func TestMigrate(t *testing.T) {
+	aiderBin, tempDir, aiderTempDir := setupTestMigrate(t)
 
 	for _, target := range targets {
 		testName := *model + target

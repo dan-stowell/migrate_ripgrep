@@ -208,6 +208,61 @@ func setupTestMigrate(t *testing.T) (aiderBin, tempDir, aiderTempDir string) {
 	return aiderBin, tempDir, aiderTempDir
 }
 
+func attemptAiderBazelGit(aiderBin, tempDir, aiderTempDir, model, target, buildArg string, attempt, maxAttempts int, t *testing.T) bool {
+	log.Printf("Invoking aider for model %s target %s (attempt %d/%d)", model, target, attempt, maxAttempts)
+	if err := runAider(aiderBin, tempDir, aiderTempDir, model, target, buildArg); err != nil {
+		log.Printf("aider failed for model %s target %s: %v", model, target, err)
+		return false
+	}
+	log.Printf("Completed aider for model %s target %s (attempt %d/%d)", model, target, attempt, maxAttempts)
+
+	// After aider, first run 'bazel query' to check target visibility/resolution.
+	log.Printf("Invoking bazel query %s (model: %s, attempt %d/%d)", target, model, attempt, maxAttempts)
+	queryOut, queryErr := bazelQuery(tempDir, target)
+	if queryErr != nil {
+		log.Printf("bazel query failed for model %s target %s: %v\n%s", model, target, queryErr, queryOut)
+		return false
+	}
+	log.Printf("Completed bazel query %s (model: %s, attempt %d/%d)", target, model, attempt, maxAttempts)
+
+	// Query succeeded; attempt to build the target.
+	log.Printf("Invoking bazel build %s (model: %s, attempt %d/%d)", target, model, attempt, maxAttempts)
+	bazelOut, bazelErr := bazelBuild(tempDir, target)
+	if bazelErr != nil {
+		log.Printf("bazel build failed for model %s target %s: %v\n%s", model, target, bazelErr, bazelOut)
+		return false
+	}
+	log.Printf("Completed bazel build %s (model: %s, attempt %d/%d)", target, model, attempt, maxAttempts)
+
+	// Bazel build succeeded. Commit any untracked or dirty files and move on.
+	log.Printf("Invoking git add -A in %s", tempDir)
+	if out, err := gitAddAll(tempDir); err != nil {
+		t.Fatalf("git add failed in %s: %v\n%s", tempDir, err, out)
+	}
+	log.Printf("Completed git add -A")
+
+	log.Printf("Invoking git status --porcelain in %s", tempDir)
+	statusOut, err := gitStatusPorcelain(tempDir)
+	if err != nil {
+		t.Fatalf("git status failed in %s: %v", tempDir, err)
+	}
+	log.Printf("Completed git status --porcelain")
+
+	if strings.TrimSpace(string(statusOut)) == "" {
+		log.Printf("No changes to commit in %s for model %s target %s", tempDir, model, target)
+	} else {
+		commitMsg := fmt.Sprintf("aider: model %s target %s", model, target)
+		log.Printf("Invoking git commit -m \"%s\" in %s", commitMsg, tempDir)
+		if err := gitCommit(tempDir, commitMsg); err != nil {
+			t.Fatalf("git commit failed in %s: %v", tempDir, err)
+		}
+		log.Printf("Completed git commit -m \"%s\"", commitMsg)
+	}
+
+	log.Printf("bazel build succeeded for model %s target %s", model, target)
+	return true
+}
+
 func TestMigrate(t *testing.T) {
 	aiderBin, tempDir, aiderTempDir := setupTestMigrate(t)
 
@@ -254,59 +309,10 @@ func TestMigrate(t *testing.T) {
 			const maxAttempts = 5
 			success := false
 			for attempt := 1; attempt <= maxAttempts; attempt++ {
-				log.Printf("Invoking aider for model %s target %s (attempt %d/%d)", *model, target, attempt, maxAttempts)
-				if err := runAider(aiderBin, tempDir, aiderTempDir, *model, target, buildArg); err != nil {
-					log.Printf("aider failed for model %s target %s: %v", *model, target, err)
-					continue // Continue to next attempt if aider itself fails
+				if attemptAiderBazelGit(aiderBin, tempDir, aiderTempDir, *model, target, buildArg, attempt, maxAttempts, t) {
+					success = true
+					break // move to next target
 				}
-				log.Printf("Completed aider for model %s target %s (attempt %d/%d)", *model, target, attempt, maxAttempts)
-
-				// After aider, first run 'bazel query' to check target visibility/resolution.
-				log.Printf("Invoking bazel query %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
-				queryOut, queryErr := bazelQuery(tempDir, target)
-				if queryErr != nil {
-					log.Printf("bazel query failed for model %s target %s: %v\n%s", *model, target, queryErr, queryOut)
-					continue
-				}
-				log.Printf("Completed bazel query %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
-
-				// Query succeeded; attempt to build the target.
-				log.Printf("Invoking bazel build %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
-				bazelOut, bazelErr := bazelBuild(tempDir, target)
-				if bazelErr != nil {
-					log.Printf("bazel build failed for model %s target %s: %v\n%s", *model, target, bazelErr, bazelOut)
-					continue
-				}
-				log.Printf("Completed bazel build %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
-
-				// Bazel build succeeded. Commit any untracked or dirty files and move on.
-				log.Printf("Invoking git add -A in %s", tempDir)
-				if out, err := gitAddAll(tempDir); err != nil {
-					t.Fatalf("git add failed in %s: %v\n%s", tempDir, err, out)
-				}
-				log.Printf("Completed git add -A")
-
-				log.Printf("Invoking git status --porcelain in %s", tempDir)
-				statusOut, err := gitStatusPorcelain(tempDir)
-				if err != nil {
-					t.Fatalf("git status failed in %s: %v", tempDir, err)
-				}
-				log.Printf("Completed git status --porcelain")
-
-				if strings.TrimSpace(string(statusOut)) == "" {
-					log.Printf("No changes to commit in %s for model %s target %s", tempDir, *model, target)
-				} else {
-					commitMsg := fmt.Sprintf("aider: model %s target %s", *model, target)
-					log.Printf("Invoking git commit -m \"%s\" in %s", commitMsg, tempDir)
-					if err := gitCommit(tempDir, commitMsg); err != nil {
-						t.Fatalf("git commit failed in %s: %v", tempDir, err)
-					}
-					log.Printf("Completed git commit -m \"%s\"", commitMsg)
-				}
-
-				log.Printf("bazel build succeeded for model %s target %s", *model, target)
-				success = true
-				break // move to next target
 			}
 			var testFailed bool
 			if !success {

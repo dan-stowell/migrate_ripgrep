@@ -2,7 +2,6 @@ package migrate_ripgrep_test
 
 import (
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -71,7 +70,7 @@ func TestMigrate(t *testing.T) {
 	}
 
 	for _, target := range targets {
-		testName := fmt.Sprintf("%s/%s", *model, target)
+		testName := *model+target
 		t.Run(testName, func(t *testing.T) {
 			log.Printf("Attempting bazel query for target: %s in %s (model: %s)", target, tempDir, *model)
 			queryCmd := exec.Command("bazel", "query", target)

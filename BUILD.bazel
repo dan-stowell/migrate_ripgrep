@@ -5,7 +5,10 @@ go_test(
 	name = "migrate_ripgrep_test",
 	srcs = ["migrate_ripgrep_test.go"],
 	deps = ["@rules_go//go/runfiles"],
-	data = [":aider"],
+	data = [
+		":aider",
+		"MODULE.bazel",
+	],
 )
 
 py_binary(

@@ -1,6 +1,7 @@
 package migrate_ripgrep_test
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 )
+
+var model = flag.String("model", "openrouter/google/gemini-2.5-flash", "The LLM model to use for testing")
 
 var targets = []string{
 	"//crates/matcher:grep_matcher",
@@ -26,6 +29,8 @@ var targets = []string{
 }
 
 func TestMigrate(t *testing.T) {
+	flag.Parse()
+
 	// Create a temporary directory for the git clone
 	tempDir, err := os.MkdirTemp("", "ripgrep-test-")
 	if err != nil {
@@ -67,8 +72,9 @@ func TestMigrate(t *testing.T) {
 	}
 
 	for _, target := range targets {
-		t.Run(fmt.Sprintf("Target-%s", strings.ReplaceAll(target, "/", "_")), func(t *testing.T) {
-			log.Printf("Attempting bazel query for target: %s in %s", target, tempDir)
+		testName := fmt.Sprintf("%s-Target-%s", *model, strings.ReplaceAll(target, "/", "_"))
+		t.Run(testName, func(t *testing.T) {
+			log.Printf("Attempting bazel query for target: %s in %s (model: %s)", target, tempDir, *model)
 			queryCmd := exec.Command("bazel", "query", target)
 			queryCmd.Dir = tempDir
 			queryOut, queryErr := queryCmd.CombinedOutput()

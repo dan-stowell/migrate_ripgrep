@@ -7,7 +7,6 @@ go_test(
 	deps = ["@rules_go//go/runfiles"],
 	data = [
 		":aider",
-		"MODULE.bazel",
 	],
 )
 

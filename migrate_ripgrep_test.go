@@ -203,10 +203,6 @@ func TestMigrate(t *testing.T) {
 				// aiderCmd.Stderr = os.Stderr
 				if err := aiderCmd.Run(); err != nil {
 					log.Printf("aider failed for model %s target %s: %v", *model, target, err)
-					// Stash any untracked or dirty files and retry with aider.
-					if err := gitStashAll(tempDir); err != nil {
-						t.Fatalf("git stash failed in %s: %v", tempDir, err)
-					}
 					continue // Continue to next attempt if aider itself fails
 				}
 				log.Printf("Completed aider for model %s target %s (attempt %d/%d)", *model, target, attempt, maxAttempts)
@@ -218,10 +214,6 @@ func TestMigrate(t *testing.T) {
 				queryOut, queryErr := queryCmd.CombinedOutput()
 				if queryErr != nil {
 					log.Printf("bazel query failed for model %s target %s: %v\n%s", *model, target, queryErr, string(queryOut))
-					// Stash any untracked or dirty files and retry with aider.
-					if err := gitStashAll(tempDir); err != nil {
-						t.Fatalf("git stash failed in %s: %v", tempDir, err)
-					}
 					continue
 				}
 				log.Printf("Completed bazel query %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
@@ -233,10 +225,6 @@ func TestMigrate(t *testing.T) {
 				bazelOut, bazelErr := bazelCmd.CombinedOutput()
 				if bazelErr != nil {
 					log.Printf("bazel build failed for model %s target %s: %v\n%s", *model, target, bazelErr, string(bazelOut))
-					// Stash any untracked or dirty files and retry with aider.
-					if err := gitStashAll(tempDir); err != nil {
-						t.Fatalf("git stash failed in %s: %v", tempDir, err)
-					}
 					continue
 				}
 				log.Printf("Completed bazel build %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)

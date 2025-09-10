@@ -108,14 +108,16 @@ func TestMigrate(t *testing.T) {
 	log.Printf("Cloning %s into %s", repoURL, tempDir)
 
 	// Clone the repository
+	log.Printf("Invoking git clone --depth 1 --single-branch %s %s", repoURL, tempDir)
 	cloneCmd := exec.Command("git", "clone", "--depth", "1", "--single-branch", repoURL, tempDir)
 	if err := cloneCmd.Run(); err != nil {
 		t.Fatalf("Failed to clone repository: %v", err)
 	}
+	log.Printf("Completed git clone")
 
 	// Get the basename of the temporary directory to use as the branch name
 	branchName := filepath.Base(tempDir)
-	log.Printf("git branch %s in %s", branchName, tempDir)
+	log.Printf("Invoking git branch %s in %s", branchName, tempDir)
 
 	// Create a new git branch
 	branchCmd := exec.Command("git", "branch", branchName)
@@ -123,13 +125,16 @@ func TestMigrate(t *testing.T) {
 	if err := branchCmd.Run(); err != nil {
 		t.Fatalf("Failed to create branch %s: %v", branchName, err)
 	}
+	log.Printf("Completed git branch %s", branchName)
 
 	// Checkout the new branch
+	log.Printf("Invoking git checkout %s in %s", branchName, tempDir)
 	checkoutCmd := exec.Command("git", "checkout", branchName)
 	checkoutCmd.Dir = tempDir
 	if err := checkoutCmd.Run(); err != nil {
 		t.Fatalf("Failed to checkout branch %s: %v", branchName, err)
 	}
+	log.Printf("Completed git checkout %s", branchName)
 
 	for _, target := range targets {
 		testName := *model + target
@@ -151,17 +156,19 @@ func TestMigrate(t *testing.T) {
 			}
 
 			// Pre-check: If bazel query then bazel build succeed without changes, skip aider.
-			log.Printf("Pre-check: bazel query %s (model: %s)", target, *model)
+			log.Printf("Invoking bazel query %s (model: %s)", target, *model)
 			queryCmd := exec.Command("bazel", "query", target)
 			queryCmd.Dir = tempDir
 			queryOut, queryErr := queryCmd.CombinedOutput()
 			if queryErr == nil {
+				log.Printf("Completed bazel query %s (model: %s)", target, *model)
 				// Query succeeded; try building directly.
-				log.Printf("Pre-check: bazel build %s (model: %s)", target, *model)
+				log.Printf("Invoking bazel build %s (model: %s)", target, *model)
 				bazelCmd := exec.Command("bazel", "build", target)
 				bazelCmd.Dir = tempDir
 				bazelOut, bazelErr := bazelCmd.CombinedOutput()
 				if bazelErr == nil {
+					log.Printf("Completed bazel build %s (model: %s)", target, *model)
 					log.Printf("Pre-check: bazel query and build succeeded for model %s target %s; skipping aider", *model, target)
 					return // move to next target
 				}
@@ -202,56 +209,61 @@ func TestMigrate(t *testing.T) {
 					}
 					continue // Continue to next attempt if aider itself fails
 				}
-				log.Printf("aider completed for model %s target %s (attempt %d/%d)", *model, target, attempt, maxAttempts)
+				log.Printf("Completed aider for model %s target %s (attempt %d/%d)", *model, target, attempt, maxAttempts)
 
 				// After aider, first run 'bazel query' to check target visibility/resolution.
-				log.Printf("Post-aider: bazel query %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
+				log.Printf("Invoking bazel query %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
 				queryCmd := exec.Command("bazel", "query", target)
 				queryCmd.Dir = tempDir
 				queryOut, queryErr := queryCmd.CombinedOutput()
 				if queryErr != nil {
-					log.Printf("Post-aider: bazel query failed for model %s target %s: %v\n%s", *model, target, queryErr, string(queryOut))
+					log.Printf("bazel query failed for model %s target %s: %v\n%s", *model, target, queryErr, string(queryOut))
 					// Stash any untracked or dirty files and retry with aider.
 					if err := gitStashAll(tempDir); err != nil {
 						t.Fatalf("git stash failed in %s: %v", tempDir, err)
 					}
 					continue
 				}
+				log.Printf("Completed bazel query %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
 
 				// Query succeeded; attempt to build the target.
-				log.Printf("Post-aider: bazel build %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
+				log.Printf("Invoking bazel build %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
 				bazelCmd := exec.Command("bazel", "build", target)
 				bazelCmd.Dir = tempDir
 				bazelOut, bazelErr := bazelCmd.CombinedOutput()
 				if bazelErr != nil {
-					log.Printf("Post-aider: bazel build failed for model %s target %s: %v\n%s", *model, target, bazelErr, string(bazelOut))
+					log.Printf("bazel build failed for model %s target %s: %v\n%s", *model, target, bazelErr, string(bazelOut))
 					// Stash any untracked or dirty files and retry with aider.
 					if err := gitStashAll(tempDir); err != nil {
 						t.Fatalf("git stash failed in %s: %v", tempDir, err)
 					}
 					continue
 				}
+				log.Printf("Completed bazel build %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
 
 				// Bazel build succeeded. Commit any untracked or dirty files and move on.
-				log.Printf("git add -A in %s", tempDir)
+				log.Printf("Invoking git add -A in %s", tempDir)
 				addCmd := exec.Command("git", "add", "-A")
 				addCmd.Dir = tempDir
 				if out, err := addCmd.CombinedOutput(); err != nil {
 					t.Fatalf("git add failed in %s: %v\n%s", tempDir, err, string(out))
 				}
+				log.Printf("Completed git add -A")
 
-				log.Printf("git status --porcelain in %s", tempDir)
+				log.Printf("Invoking git status --porcelain in %s", tempDir)
 				statusCmd := exec.Command("git", "status", "--porcelain")
 				statusCmd.Dir = tempDir
 				statusOut, err := statusCmd.Output()
 				if err != nil {
 					t.Fatalf("git status failed in %s: %v", tempDir, err)
 				}
+				log.Printf("Completed git status --porcelain")
+
 				if strings.TrimSpace(string(statusOut)) == "" {
 					log.Printf("No changes to commit in %s for model %s target %s", tempDir, *model, target)
 				} else {
 					commitMsg := fmt.Sprintf("aider: model %s target %s", *model, target)
-					log.Printf("git commit -m \"%s\" in %s", commitMsg, tempDir)
+					log.Printf("Invoking git commit -m \"%s\" in %s", commitMsg, tempDir)
 					commitCmd := exec.Command("git", "commit", "-m", commitMsg)
 					commitCmd.Dir = tempDir
 					// commitCmd.Stdout = os.Stdout
@@ -259,7 +271,7 @@ func TestMigrate(t *testing.T) {
 					if err := commitCmd.Run(); err != nil {
 						t.Fatalf("git commit failed in %s: %v", tempDir, err)
 					}
-					log.Printf("Committed changes in %s: %s", tempDir, commitMsg)
+					log.Printf("Completed git commit -m \"%s\"", commitMsg)
 				}
 
 				log.Printf("bazel build succeeded for model %s target %s", *model, target)

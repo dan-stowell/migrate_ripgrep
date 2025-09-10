@@ -8,6 +8,7 @@ go_test(
 	data = [
 		":aider",
 	],
+	timeout = "long",
 )
 
 py_binary(

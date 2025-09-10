@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -72,7 +71,7 @@ func TestMigrate(t *testing.T) {
 	}
 
 	for _, target := range targets {
-		testName := fmt.Sprintf("%s-Target-%s", *model, strings.ReplaceAll(target, "/", "_"))
+		testName := fmt.Sprintf("%s/%s", *model, target)
 		t.Run(testName, func(t *testing.T) {
 			log.Printf("Attempting bazel query for target: %s in %s (model: %s)", target, tempDir, *model)
 			queryCmd := exec.Command("bazel", "query", target)

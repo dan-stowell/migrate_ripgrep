@@ -1,0 +1,6 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+	name = "migrate_ripgrep_test",
+	srcs = ["migrate_ripgrep_test.go"],
+)

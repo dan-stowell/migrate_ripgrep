@@ -263,6 +263,28 @@ func attemptAiderBazelGit(aiderBin, tempDir, aiderTempDir, model, target, buildA
 	return true
 }
 
+func precheckBazelQueryAndBuild(tempDir, target, model string) bool {
+	log.Printf("Invoking bazel query %s (model: %s)", target, model)
+	queryOut, queryErr := bazelQuery(tempDir, target)
+	if queryErr == nil {
+		log.Printf("Completed bazel query %s (model: %s)", target, model)
+		// Query succeeded; try building directly.
+		log.Printf("Invoking bazel build %s (model: %s)", target, model)
+		bazelOut, bazelErr := bazelBuild(tempDir, target)
+		if bazelErr == nil {
+			log.Printf("Completed bazel build %s (model: %s)", target, model)
+			log.Printf("Pre-check: bazel query and build succeeded for model %s target %s; skipping aider", model, target)
+			return true
+		}
+		log.Printf("Pre-check: bazel build failed for model %s target %s: %v\n%s", model, target, bazelErr, bazelOut)
+		// Fall through to aider loop to attempt fixes.
+	} else {
+		log.Printf("Pre-check: bazel query failed for model %s target %s: %v\n%s", model, target, queryErr, queryOut)
+		// Fall through to aider loop to attempt fixes.
+	}
+	return false
+}
+
 func TestMigrate(t *testing.T) {
 	aiderBin, tempDir, aiderTempDir := setupTestMigrate(t)
 
@@ -286,23 +308,8 @@ func TestMigrate(t *testing.T) {
 			}
 
 			// Pre-check: If bazel query then bazel build succeed without changes, skip aider.
-			log.Printf("Invoking bazel query %s (model: %s)", target, *model)
-			queryOut, queryErr := bazelQuery(tempDir, target)
-			if queryErr == nil {
-				log.Printf("Completed bazel query %s (model: %s)", target, *model)
-				// Query succeeded; try building directly.
-				log.Printf("Invoking bazel build %s (model: %s)", target, *model)
-				bazelOut, bazelErr := bazelBuild(tempDir, target)
-				if bazelErr == nil {
-					log.Printf("Completed bazel build %s (model: %s)", target, *model)
-					log.Printf("Pre-check: bazel query and build succeeded for model %s target %s; skipping aider", *model, target)
-					return // move to next target
-				}
-				log.Printf("Pre-check: bazel build failed for model %s target %s: %v\n%s", *model, target, bazelErr, bazelOut)
-				// Fall through to aider loop to attempt fixes.
-			} else {
-				log.Printf("Pre-check: bazel query failed for model %s target %s: %v\n%s", *model, target, queryErr, queryOut)
-				// Fall through to aider loop to attempt fixes.
+			if precheckBazelQueryAndBuild(tempDir, target, *model) {
+				return // move to next target
 			}
 
 			// Try up to N attempts per model/target using aider to produce Bazel changes.

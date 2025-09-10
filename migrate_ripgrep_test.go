@@ -98,6 +98,12 @@ func TestMigrate(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir) // Clean up the temporary directory
 
+	aiderTempDir, err := os.MkdirTemp("", "aider-test-home-")
+	if err != nil {
+		t.Fatalf("Failed to create temporary directory for aider home: %v", err)
+	}
+	defer os.RemoveAll(aiderTempDir) // Clean up the aider temporary directory
+
 	repoURL := "https://github.com/dan-stowell/ripgrep"
 	log.Printf("Cloning %s into %s", repoURL, tempDir)
 
@@ -187,6 +193,7 @@ func TestMigrate(t *testing.T) {
 					buildArg,
 				)
 				aiderCmd.Dir = tempDir
+				aiderCmd.Env = append(os.Environ(), "HOME="+aiderTempDir)
 				aiderCmd.Stdout = os.Stdout
 				aiderCmd.Stderr = os.Stderr
 				if err := aiderCmd.Run(); err != nil {

@@ -1,1 +1,1 @@
-# test-migrate-ripgrep
+# migrate_ripgrep

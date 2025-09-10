@@ -159,6 +159,8 @@ func TestMigrate(t *testing.T) {
 			log.Printf("Invoking bazel query %s (model: %s)", target, *model)
 			queryCmd := exec.Command("bazel", "query", target)
 			queryCmd.Dir = tempDir
+			queryCmd.Stdout = os.Stdout
+			queryCmd.Stderr = os.Stderr
 			queryOut, queryErr := queryCmd.CombinedOutput()
 			if queryErr == nil {
 				log.Printf("Completed bazel query %s (model: %s)", target, *model)
@@ -166,6 +168,8 @@ func TestMigrate(t *testing.T) {
 				log.Printf("Invoking bazel build %s (model: %s)", target, *model)
 				bazelCmd := exec.Command("bazel", "build", target)
 				bazelCmd.Dir = tempDir
+				bazelCmd.Stdout = os.Stdout
+				bazelCmd.Stderr = os.Stderr
 				bazelOut, bazelErr := bazelCmd.CombinedOutput()
 				if bazelErr == nil {
 					log.Printf("Completed bazel build %s (model: %s)", target, *model)
@@ -211,6 +215,8 @@ func TestMigrate(t *testing.T) {
 				log.Printf("Invoking bazel query %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
 				queryCmd := exec.Command("bazel", "query", target)
 				queryCmd.Dir = tempDir
+				queryCmd.Stdout = os.DevNull
+				queryCmd.Stderr = os.DevNull
 				queryOut, queryErr := queryCmd.CombinedOutput()
 				if queryErr != nil {
 					log.Printf("bazel query failed for model %s target %s: %v\n%s", *model, target, queryErr, string(queryOut))
@@ -222,6 +228,8 @@ func TestMigrate(t *testing.T) {
 				log.Printf("Invoking bazel build %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
 				bazelCmd := exec.Command("bazel", "build", target)
 				bazelCmd.Dir = tempDir
+				bazelCmd.Stdout = os.DevNull
+				bazelCmd.Stderr = os.DevNull
 				bazelOut, bazelErr := bazelCmd.CombinedOutput()
 				if bazelErr != nil {
 					log.Printf("bazel build failed for model %s target %s: %v\n%s", *model, target, bazelErr, string(bazelOut))

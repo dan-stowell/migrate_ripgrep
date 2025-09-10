@@ -4,7 +4,7 @@ load("@rules_python//python:defs.bzl", "py_binary")
 go_test(
 	name = "migrate_ripgrep_test",
 	srcs = ["migrate_ripgrep_test.go"],
-	deps = ["@io_bazel_rules_go//go/runfiles"],
+	deps = ["@rules_go//go/runfiles"],
 )
 
 py_binary(

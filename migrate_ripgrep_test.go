@@ -277,6 +277,17 @@ func TestMigrate(t *testing.T) {
 			if !success {
 				t.Fatalf("Maximum attempts (%d) reached for model %s target %s; failing test.", maxAttempts, *model, target)
 			}
+
+			// Print git diff at the end of each test case
+			log.Printf("Git diff for model %s target %s:", *model, target)
+			diffCmd := exec.Command("git", "diff")
+			diffCmd.Dir = tempDir
+			diffOut, err := diffCmd.CombinedOutput()
+			if err != nil {
+				log.Printf("Failed to get git diff in %s: %v\n%s", tempDir, err, string(diffOut))
+			} else {
+				log.Printf("\n%s", string(diffOut))
+			}
 		})
 	}
 }

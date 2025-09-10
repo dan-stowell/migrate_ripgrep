@@ -109,21 +109,17 @@ func TestMigrate(t *testing.T) {
 
 	// Clone the repository
 	cloneCmd := exec.Command("git", "clone", "--depth", "1", "--single-branch", repoURL, tempDir)
-	cloneCmd.Stdout = os.Stdout
-	cloneCmd.Stderr = os.Stderr
 	if err := cloneCmd.Run(); err != nil {
 		t.Fatalf("Failed to clone repository: %v", err)
 	}
 
 	// Get the basename of the temporary directory to use as the branch name
 	branchName := filepath.Base(tempDir)
-	log.Printf("Creating branch %s in %s", branchName, tempDir)
+	log.Printf("git branch %s in %s", branchName, tempDir)
 
 	// Create a new git branch
 	branchCmd := exec.Command("git", "branch", branchName)
 	branchCmd.Dir = tempDir
-	branchCmd.Stdout = os.Stdout
-	branchCmd.Stderr = os.Stderr
 	if err := branchCmd.Run(); err != nil {
 		t.Fatalf("Failed to create branch %s: %v", branchName, err)
 	}
@@ -131,8 +127,6 @@ func TestMigrate(t *testing.T) {
 	// Checkout the new branch
 	checkoutCmd := exec.Command("git", "checkout", branchName)
 	checkoutCmd.Dir = tempDir
-	checkoutCmd.Stdout = os.Stdout
-	checkoutCmd.Stderr = os.Stderr
 	if err := checkoutCmd.Run(); err != nil {
 		t.Fatalf("Failed to checkout branch %s: %v", branchName, err)
 	}
@@ -157,22 +151,24 @@ func TestMigrate(t *testing.T) {
 			}
 
 			// Pre-check: If bazel query then bazel build succeed without changes, skip aider.
+			log.Printf("Pre-check: bazel query %s (model: %s)", target, *model)
 			queryCmd := exec.Command("bazel", "query", target)
 			queryCmd.Dir = tempDir
 			queryOut, queryErr := queryCmd.CombinedOutput()
 			if queryErr == nil {
 				// Query succeeded; try building directly.
+				log.Printf("Pre-check: bazel build %s (model: %s)", target, *model)
 				bazelCmd := exec.Command("bazel", "build", target)
 				bazelCmd.Dir = tempDir
 				bazelOut, bazelErr := bazelCmd.CombinedOutput()
 				if bazelErr == nil {
-					log.Printf("bazel query and build succeeded for model %s target %s; skipping aider", *model, target)
+					log.Printf("Pre-check: bazel query and build succeeded for model %s target %s; skipping aider", *model, target)
 					return // move to next target
 				}
-				log.Printf("Pre-check bazel build failed for model %s target %s: %v\n%s", *model, target, bazelErr, string(bazelOut))
+				log.Printf("Pre-check: bazel build failed for model %s target %s: %v\n%s", *model, target, bazelErr, string(bazelOut))
 				// Fall through to aider loop to attempt fixes.
 			} else {
-				log.Printf("Pre-check bazel query failed for model %s target %s: %v\n%s", *model, target, queryErr, string(queryOut))
+				log.Printf("Pre-check: bazel query failed for model %s target %s: %v\n%s", *model, target, queryErr, string(queryOut))
 				// Fall through to aider loop to attempt fixes.
 			}
 
@@ -180,6 +176,7 @@ func TestMigrate(t *testing.T) {
 			const maxAttempts = 5
 			success := false
 			for attempt := 1; attempt <= maxAttempts; attempt++ {
+				log.Printf("Invoking aider for model %s target %s (attempt %d/%d)", *model, target, attempt, maxAttempts)
 				aiderCmd := exec.Command(
 					aiderBin,
 					"--disable-playwright",
@@ -194,49 +191,56 @@ func TestMigrate(t *testing.T) {
 				)
 				aiderCmd.Dir = tempDir
 				aiderCmd.Env = append(os.Environ(), "HOME="+aiderTempDir)
-				aiderCmd.Stdout = os.Stdout
-				aiderCmd.Stderr = os.Stderr
+				// Suppress aider's stdout/stderr
+				// aiderCmd.Stdout = os.Stdout
+				// aiderCmd.Stderr = os.Stderr
 				if err := aiderCmd.Run(); err != nil {
-					t.Errorf("aider failed for model %s target %s: %v", *model, target, err)
-					break // Break from attempts loop if aider itself fails
+					log.Printf("aider failed for model %s target %s: %v", *model, target, err)
+					// Stash any untracked or dirty files and retry with aider.
+					if err := gitStashAll(tempDir); err != nil {
+						t.Fatalf("git stash failed in %s: %v", tempDir, err)
+					}
+					continue // Continue to next attempt if aider itself fails
 				}
 				log.Printf("aider completed for model %s target %s (attempt %d/%d)", *model, target, attempt, maxAttempts)
 
 				// After aider, first run 'bazel query' to check target visibility/resolution.
+				log.Printf("Post-aider: bazel query %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
 				queryCmd := exec.Command("bazel", "query", target)
 				queryCmd.Dir = tempDir
 				queryOut, queryErr := queryCmd.CombinedOutput()
 				if queryErr != nil {
-					log.Printf("bazel query failed for model %s target %s: %v\n%s", *model, target, queryErr, string(queryOut))
+					log.Printf("Post-aider: bazel query failed for model %s target %s: %v\n%s", *model, target, queryErr, string(queryOut))
 					// Stash any untracked or dirty files and retry with aider.
 					if err := gitStashAll(tempDir); err != nil {
 						t.Fatalf("git stash failed in %s: %v", tempDir, err)
 					}
-					log.Printf("Re-invoking aider for model %s target %s after failed bazel query (attempt %d/%d)", *model, target, attempt, maxAttempts)
 					continue
 				}
 
 				// Query succeeded; attempt to build the target.
+				log.Printf("Post-aider: bazel build %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
 				bazelCmd := exec.Command("bazel", "build", target)
 				bazelCmd.Dir = tempDir
 				bazelOut, bazelErr := bazelCmd.CombinedOutput()
 				if bazelErr != nil {
-					log.Printf("bazel build failed for model %s target %s: %v\n%s", *model, target, bazelErr, string(bazelOut))
+					log.Printf("Post-aider: bazel build failed for model %s target %s: %v\n%s", *model, target, bazelErr, string(bazelOut))
 					// Stash any untracked or dirty files and retry with aider.
 					if err := gitStashAll(tempDir); err != nil {
 						t.Fatalf("git stash failed in %s: %v", tempDir, err)
 					}
-					log.Printf("Re-invoking aider for model %s target %s after failed bazel build (attempt %d/%d)", *model, target, attempt, maxAttempts)
 					continue
 				}
 
 				// Bazel build succeeded. Commit any untracked or dirty files and move on.
+				log.Printf("git add -A in %s", tempDir)
 				addCmd := exec.Command("git", "add", "-A")
 				addCmd.Dir = tempDir
 				if out, err := addCmd.CombinedOutput(); err != nil {
 					t.Fatalf("git add failed in %s: %v\n%s", tempDir, err, string(out))
 				}
 
+				log.Printf("git status --porcelain in %s", tempDir)
 				statusCmd := exec.Command("git", "status", "--porcelain")
 				statusCmd.Dir = tempDir
 				statusOut, err := statusCmd.Output()
@@ -247,10 +251,11 @@ func TestMigrate(t *testing.T) {
 					log.Printf("No changes to commit in %s for model %s target %s", tempDir, *model, target)
 				} else {
 					commitMsg := fmt.Sprintf("aider: model %s target %s", *model, target)
+					log.Printf("git commit -m \"%s\" in %s", commitMsg, tempDir)
 					commitCmd := exec.Command("git", "commit", "-m", commitMsg)
 					commitCmd.Dir = tempDir
-					commitCmd.Stdout = os.Stdout
-					commitCmd.Stderr = os.Stderr
+					// commitCmd.Stdout = os.Stdout
+					// commitCmd.Stderr = os.Stderr
 					if err := commitCmd.Run(); err != nil {
 						t.Fatalf("git commit failed in %s: %v", tempDir, err)
 					}
@@ -262,7 +267,7 @@ func TestMigrate(t *testing.T) {
 				break // move to next target
 			}
 			if !success {
-				t.Errorf("Maximum attempts (%d) reached for model %s target %s; moving on to next target/worktree", maxAttempts, *model, target)
+				t.Fatalf("Maximum attempts (%d) reached for model %s target %s; failing test.", maxAttempts, *model, target)
 			}
 		})
 	}

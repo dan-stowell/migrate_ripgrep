@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"fmt"
-	"io"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -83,6 +82,79 @@ func gitStashAll(worktreePath string) error {
 	return nil
 }
 
+// Helper command runners and high-level wrappers.
+func runCombined(dir, name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func gitClone(repoURL, dest string) error {
+	_, err := runCombined("", "git", "clone", "--depth", "1", "--single-branch", repoURL, dest)
+	return err
+}
+
+func gitBranch(dir, branchName string) error {
+	_, err := runCombined(dir, "git", "branch", branchName)
+	return err
+}
+
+func gitCheckout(dir, branchName string) error {
+	_, err := runCombined(dir, "git", "checkout", branchName)
+	return err
+}
+
+func bazelQuery(dir, target string) (string, error) {
+	return runCombined(dir, "bazel", "query", target)
+}
+
+func bazelBuild(dir, target string) (string, error) {
+	return runCombined(dir, "bazel", "build", target)
+}
+
+func runAider(aiderBin, dir, home, model, target, buildArg string) error {
+	args := []string{
+		"--disable-playwright",
+		"--yes-always",
+		"--model", model,
+		"--edit-format", "diff",
+		"--auto-test",
+		"--test-cmd", "bazel build " + target,
+		"--message", "Please make the minimal Bazel file changes necessary to build " + target + ". Do not touch non-Bazel files.",
+		"MODULE.bazel",
+		buildArg,
+	}
+	cmd := exec.Command(aiderBin, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "HOME="+home)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("aider error: %v\n%s", err, string(out))
+	}
+	return nil
+}
+
+func gitAddAll(dir string) (string, error) {
+	return runCombined(dir, "git", "add", "-A")
+}
+
+func gitStatusPorcelain(dir string) (string, error) {
+	out, err := runCombined(dir, "git", "status", "--porcelain")
+	return out, err
+}
+
+func gitCommit(dir, msg string) error {
+	_, err := runCombined(dir, "git", "commit", "-m", msg)
+	return err
+}
+
+func gitDiff(dir string) (string, error) {
+	return runCombined(dir, "git", "diff")
+}
+
 func TestMigrate(t *testing.T) {
 	flag.Parse()
 
@@ -110,8 +182,7 @@ func TestMigrate(t *testing.T) {
 
 	// Clone the repository
 	log.Printf("Invoking git clone --depth 1 --single-branch %s %s", repoURL, tempDir)
-	cloneCmd := exec.Command("git", "clone", "--depth", "1", "--single-branch", repoURL, tempDir)
-	if err := cloneCmd.Run(); err != nil {
+	if err := gitClone(repoURL, tempDir); err != nil {
 		t.Fatalf("Failed to clone repository: %v", err)
 	}
 	log.Printf("Completed git clone")
@@ -121,18 +192,14 @@ func TestMigrate(t *testing.T) {
 	log.Printf("Invoking git branch %s in %s", branchName, tempDir)
 
 	// Create a new git branch
-	branchCmd := exec.Command("git", "branch", branchName)
-	branchCmd.Dir = tempDir
-	if err := branchCmd.Run(); err != nil {
+	if err := gitBranch(tempDir, branchName); err != nil {
 		t.Fatalf("Failed to create branch %s: %v", branchName, err)
 	}
 	log.Printf("Completed git branch %s", branchName)
 
 	// Checkout the new branch
 	log.Printf("Invoking git checkout %s in %s", branchName, tempDir)
-	checkoutCmd := exec.Command("git", "checkout", branchName)
-	checkoutCmd.Dir = tempDir
-	if err := checkoutCmd.Run(); err != nil {
+	if err := gitCheckout(tempDir, branchName); err != nil {
 		t.Fatalf("Failed to checkout branch %s: %v", branchName, err)
 	}
 	log.Printf("Completed git checkout %s", branchName)
@@ -158,29 +225,21 @@ func TestMigrate(t *testing.T) {
 
 			// Pre-check: If bazel query then bazel build succeed without changes, skip aider.
 			log.Printf("Invoking bazel query %s (model: %s)", target, *model)
-			queryCmd := exec.Command("bazel", "query", target)
-			queryCmd.Dir = tempDir
-			queryCmd.Stdout = io.Discard
-			queryCmd.Stderr = io.Discard
-			queryOut, queryErr := queryCmd.CombinedOutput()
+			queryOut, queryErr := bazelQuery(tempDir, target)
 			if queryErr == nil {
 				log.Printf("Completed bazel query %s (model: %s)", target, *model)
 				// Query succeeded; try building directly.
 				log.Printf("Invoking bazel build %s (model: %s)", target, *model)
-				bazelCmd := exec.Command("bazel", "build", target)
-				bazelCmd.Dir = tempDir
-				bazelCmd.Stdout = io.Discard
-				bazelCmd.Stderr = io.Discard
-				bazelOut, bazelErr := bazelCmd.CombinedOutput()
+				bazelOut, bazelErr := bazelBuild(tempDir, target)
 				if bazelErr == nil {
 					log.Printf("Completed bazel build %s (model: %s)", target, *model)
 					log.Printf("Pre-check: bazel query and build succeeded for model %s target %s; skipping aider", *model, target)
 					return // move to next target
 				}
-				log.Printf("Pre-check: bazel build failed for model %s target %s: %v\n%s", *model, target, bazelErr, string(bazelOut))
+				log.Printf("Pre-check: bazel build failed for model %s target %s: %v\n%s", *model, target, bazelErr, bazelOut)
 				// Fall through to aider loop to attempt fixes.
 			} else {
-				log.Printf("Pre-check: bazel query failed for model %s target %s: %v\n%s", *model, target, queryErr, string(queryOut))
+				log.Printf("Pre-check: bazel query failed for model %s target %s: %v\n%s", *model, target, queryErr, queryOut)
 				// Fall through to aider loop to attempt fixes.
 			}
 
@@ -189,24 +248,7 @@ func TestMigrate(t *testing.T) {
 			success := false
 			for attempt := 1; attempt <= maxAttempts; attempt++ {
 				log.Printf("Invoking aider for model %s target %s (attempt %d/%d)", *model, target, attempt, maxAttempts)
-				aiderCmd := exec.Command(
-					aiderBin,
-					"--disable-playwright",
-					"--yes-always",
-					"--model", *model,
-					"--edit-format", "diff",
-					"--auto-test",
-					"--test-cmd", "bazel build "+target,
-					"--message", "Please make the minimal Bazel file changes necessary to build "+target+". Do not touch non-Bazel files.",
-					"MODULE.bazel",
-					buildArg,
-				)
-				aiderCmd.Dir = tempDir
-				aiderCmd.Env = append(os.Environ(), "HOME="+aiderTempDir)
-				// Suppress aider's stdout/stderr
-				// aiderCmd.Stdout = os.Stdout
-				// aiderCmd.Stderr = os.Stderr
-				if err := aiderCmd.Run(); err != nil {
+				if err := runAider(aiderBin, tempDir, aiderTempDir, *model, target, buildArg); err != nil {
 					log.Printf("aider failed for model %s target %s: %v", *model, target, err)
 					continue // Continue to next attempt if aider itself fails
 				}
@@ -214,43 +256,31 @@ func TestMigrate(t *testing.T) {
 
 				// After aider, first run 'bazel query' to check target visibility/resolution.
 				log.Printf("Invoking bazel query %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
-				queryCmd := exec.Command("bazel", "query", target)
-				queryCmd.Dir = tempDir
-				queryCmd.Stdout = io.Discard
-				queryCmd.Stderr = io.Discard
-				queryOut, queryErr := queryCmd.CombinedOutput()
+				queryOut, queryErr := bazelQuery(tempDir, target)
 				if queryErr != nil {
-					log.Printf("bazel query failed for model %s target %s: %v\n%s", *model, target, queryErr, string(queryOut))
+					log.Printf("bazel query failed for model %s target %s: %v\n%s", *model, target, queryErr, queryOut)
 					continue
 				}
 				log.Printf("Completed bazel query %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
 
 				// Query succeeded; attempt to build the target.
 				log.Printf("Invoking bazel build %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
-				bazelCmd := exec.Command("bazel", "build", target)
-				bazelCmd.Dir = tempDir
-				bazelCmd.Stdout = io.Discard
-				bazelCmd.Stderr = io.Discard
-				bazelOut, bazelErr := bazelCmd.CombinedOutput()
+				bazelOut, bazelErr := bazelBuild(tempDir, target)
 				if bazelErr != nil {
-					log.Printf("bazel build failed for model %s target %s: %v\n%s", *model, target, bazelErr, string(bazelOut))
+					log.Printf("bazel build failed for model %s target %s: %v\n%s", *model, target, bazelErr, bazelOut)
 					continue
 				}
 				log.Printf("Completed bazel build %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
 
 				// Bazel build succeeded. Commit any untracked or dirty files and move on.
 				log.Printf("Invoking git add -A in %s", tempDir)
-				addCmd := exec.Command("git", "add", "-A")
-				addCmd.Dir = tempDir
-				if out, err := addCmd.CombinedOutput(); err != nil {
-					t.Fatalf("git add failed in %s: %v\n%s", tempDir, err, string(out))
+				if out, err := gitAddAll(tempDir); err != nil {
+					t.Fatalf("git add failed in %s: %v\n%s", tempDir, err, out)
 				}
 				log.Printf("Completed git add -A")
 
 				log.Printf("Invoking git status --porcelain in %s", tempDir)
-				statusCmd := exec.Command("git", "status", "--porcelain")
-				statusCmd.Dir = tempDir
-				statusOut, err := statusCmd.Output()
+				statusOut, err := gitStatusPorcelain(tempDir)
 				if err != nil {
 					t.Fatalf("git status failed in %s: %v", tempDir, err)
 				}
@@ -261,11 +291,7 @@ func TestMigrate(t *testing.T) {
 				} else {
 					commitMsg := fmt.Sprintf("aider: model %s target %s", *model, target)
 					log.Printf("Invoking git commit -m \"%s\" in %s", commitMsg, tempDir)
-					commitCmd := exec.Command("git", "commit", "-m", commitMsg)
-					commitCmd.Dir = tempDir
-					// commitCmd.Stdout = os.Stdout
-					// commitCmd.Stderr = os.Stderr
-					if err := commitCmd.Run(); err != nil {
+					if err := gitCommit(tempDir, commitMsg); err != nil {
 						t.Fatalf("git commit failed in %s: %v", tempDir, err)
 					}
 					log.Printf("Completed git commit -m \"%s\"", commitMsg)
@@ -283,13 +309,11 @@ func TestMigrate(t *testing.T) {
 
 			// Print git diff at the end of each test case
 			log.Printf("Git diff for model %s target %s:", *model, target)
-			diffCmd := exec.Command("git", "diff")
-			diffCmd.Dir = tempDir
-			diffOut, err := diffCmd.CombinedOutput()
+			diffOut, err := gitDiff(tempDir)
 			if err != nil {
-				log.Printf("Failed to get git diff in %s: %v\n%s", tempDir, err, string(diffOut))
+				log.Printf("Failed to get git diff in %s: %v\n%s", tempDir, err, diffOut)
 			} else {
-				log.Printf("\n%s", string(diffOut))
+				log.Printf("\n%s", diffOut)
 			}
 
 			if testFailed {

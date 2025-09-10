@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"fmt"
+	"io"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -215,8 +216,8 @@ func TestMigrate(t *testing.T) {
 				log.Printf("Invoking bazel query %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
 				queryCmd := exec.Command("bazel", "query", target)
 				queryCmd.Dir = tempDir
-				queryCmd.Stdout = os.DevNull
-				queryCmd.Stderr = os.DevNull
+				queryCmd.Stdout = io.Discard
+				queryCmd.Stderr = io.Discard
 				queryOut, queryErr := queryCmd.CombinedOutput()
 				if queryErr != nil {
 					log.Printf("bazel query failed for model %s target %s: %v\n%s", *model, target, queryErr, string(queryOut))
@@ -228,8 +229,8 @@ func TestMigrate(t *testing.T) {
 				log.Printf("Invoking bazel build %s (model: %s, attempt %d/%d)", target, *model, attempt, maxAttempts)
 				bazelCmd := exec.Command("bazel", "build", target)
 				bazelCmd.Dir = tempDir
-				bazelCmd.Stdout = os.DevNull
-				bazelCmd.Stderr = os.DevNull
+				bazelCmd.Stdout = io.Discard
+				bazelCmd.Stderr = io.Discard
 				bazelOut, bazelErr := bazelCmd.CombinedOutput()
 				if bazelErr != nil {
 					log.Printf("bazel build failed for model %s target %s: %v\n%s", *model, target, bazelErr, string(bazelOut))

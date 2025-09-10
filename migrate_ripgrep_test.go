@@ -160,8 +160,8 @@ func TestMigrate(t *testing.T) {
 			log.Printf("Invoking bazel query %s (model: %s)", target, *model)
 			queryCmd := exec.Command("bazel", "query", target)
 			queryCmd.Dir = tempDir
-			queryCmd.Stdout = os.Stdout
-			queryCmd.Stderr = os.Stderr
+			queryCmd.Stdout = io.Discard
+			queryCmd.Stderr = io.Discard
 			queryOut, queryErr := queryCmd.CombinedOutput()
 			if queryErr == nil {
 				log.Printf("Completed bazel query %s (model: %s)", target, *model)
@@ -169,8 +169,8 @@ func TestMigrate(t *testing.T) {
 				log.Printf("Invoking bazel build %s (model: %s)", target, *model)
 				bazelCmd := exec.Command("bazel", "build", target)
 				bazelCmd.Dir = tempDir
-				bazelCmd.Stdout = os.Stdout
-				bazelCmd.Stderr = os.Stderr
+				bazelCmd.Stdout = io.Discard
+				bazelCmd.Stderr = io.Discard
 				bazelOut, bazelErr := bazelCmd.CombinedOutput()
 				if bazelErr == nil {
 					log.Printf("Completed bazel build %s (model: %s)", target, *model)

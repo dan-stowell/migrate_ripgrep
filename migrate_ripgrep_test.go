@@ -4,6 +4,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"

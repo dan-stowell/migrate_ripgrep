@@ -196,23 +196,22 @@ func testMigrateRepo(t *testing.T, repoURL, model string, targets []string) {
 	repoTemp := mkdirTemp(t, regexp.MustCompile(`[^a-zA-Z0-9]+`).ReplaceAllString(repoURL, "-"))
 	gitClone(t, repoURL, repoTemp)
 	for _, target := range targets {
-		t.Run(model+target, func(t *testing.T) {
-			beforeSha := commitSha(t, repoTemp)
-			buildBazelPath := ensureBuildBazelExists(t, repoTemp, target)
-			buildSucceeded := buildEditLoop(t, repoTemp, target, aider, aiderTemp, model, buildBazelPath)
-			if !isRepoClean(t, repoTemp) {
-				aiderCommit(t, repoTemp, aider, aiderTemp, model)
-			}
-			afterSha := commitSha(t, repoTemp)
-			if beforeSha == afterSha {
-				t.Log("build-edit loop made no changes, surprising")
-			} else {
-				t.Logf("Changes made in the build-edit loop:\n%s", diff(t, repoTemp, beforeSha, afterSha))
-			}
-			if !buildSucceeded {
-				t.Fatalf("Could not build %q successfully", target)
-			}
-		})
+		t.Logf("Migrating %q in %q with model %q", target, repoURL, model)
+		beforeSha := commitSha(t, repoTemp)
+		buildBazelPath := ensureBuildBazelExists(t, repoTemp, target)
+		buildSucceeded := buildEditLoop(t, repoTemp, target, aider, aiderTemp, model, buildBazelPath)
+		if !isRepoClean(t, repoTemp) {
+			aiderCommit(t, repoTemp, aider, aiderTemp, model)
+		}
+		afterSha := commitSha(t, repoTemp)
+		if beforeSha == afterSha {
+			t.Log("build-edit loop made no changes, surprising")
+		} else {
+			t.Logf("Changes made in the build-edit loop:\n%s", diff(t, repoTemp, beforeSha, afterSha))
+		}
+		if !buildSucceeded {
+			t.Fatalf("Could not build %q successfully", target)
+		}
 	}
 }
 

@@ -58,7 +58,7 @@ func setupAider(t *testing.T) (string, string) {
 	return aider, aiderTemp
 }
 
-func runAider(t *testing.T, dir, aider, aiderHome, model, prompt, file string) ([]byte, error) {
+func runAider(t *testing.T, dir, aider, aiderHome, model, prompt, buildFile string) ([]byte, error) {
 	t.Logf("running aider with model %q", model)
 	cmd := exec.Command(
 		aider,
@@ -68,7 +68,7 @@ func runAider(t *testing.T, dir, aider, aiderHome, model, prompt, file string) (
 		"--edit-format", "diff",
 		"--yes-always",
 		"--disable-playwright",
-		"--file", file,
+		"--file", buildFile,
 		"--read", "MODULE.bazel",
 		"--message", prompt,
 	)
@@ -92,9 +92,13 @@ func aiderCommit(t *testing.T, dir, aider, aiderHome, model string) {
 	t.Logf("successfully commited code using aider and model %q", model)
 }
 
+func relDirForTarget(target string) string {
+	return strings.TrimPrefix(strings.Split(target, ":")[0], "//")
+}
+
 func ensureBuildBazelExists(t *testing.T, dir, target string) string {
 	t.Logf("ensuring BUILD.bazel exists for target %q", target)
-	targetDir := strings.TrimPrefix(strings.Split(target, ":")[0], "//")
+	targetDir := relDirForTarget(target)
 	if _, err := os.Stat(filepath.Join(dir, targetDir)); err != nil {
 		t.Fatalf("Directory %s for target %q does not exist: %s", targetDir, target, err)
 	}
@@ -112,14 +116,6 @@ func ensureBuildBazelExists(t *testing.T, dir, target string) string {
 	}
 	t.Logf("successfully ensured %q exists for target %q", filepath.Join(targetDir, "BUILD.bazel"), target)
 	return filepath.Join(targetDir, "BUILD.bazel")
-}
-
-func diffLastCommit(t *testing.T, dir string) []byte {
-	output, err := runCombined(dir, "git", "diff", "HEAD~1", "HEAD")
-	if err != nil {
-		t.Fatalf("Error diffing last commit (%s):\n%s", err, output)
-	}
-	return output
 }
 
 func buildEditLoop(t *testing.T, repoTemp, target, aider, aiderTemp, model, buildBazelPath string) bool {
@@ -182,14 +178,17 @@ func diff(t *testing.T, dir, left, right string) []byte {
 	return output
 }
 
-func diffFromSha(t *testing.T, dir, sha string) []byte {
-	cmd := exec.Command("git", "diff", sha, "HEAD")
+func isRepoClean(t *testing.T, dir string) bool {
+	t.Log("checking if repo is clean")
+	cmd := exec.Command("git", "status", "--porcelain")
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("Error during git diff %q HEAD: %s", sha, err)
+		t.Fatalf("Error during git status check (%s):\n%s", err, output)
 	}
-	return output
+	isClean := len(output) == 0
+	t.Logf("checked if repo is clean: %t", isClean)
+	return isClean
 }
 
 func testMigrateRepo(t *testing.T, repoURL, model string, targets []string) {
@@ -201,7 +200,9 @@ func testMigrateRepo(t *testing.T, repoURL, model string, targets []string) {
 			beforeSha := commitSha(t, repoTemp)
 			buildBazelPath := ensureBuildBazelExists(t, repoTemp, target)
 			buildSucceeded := buildEditLoop(t, repoTemp, target, aider, aiderTemp, model, buildBazelPath)
-			aiderCommit(t, repoTemp, aider, aiderTemp, model)
+			if !isRepoClean(t, repoTemp) {
+				aiderCommit(t, repoTemp, aider, aiderTemp, model)
+			}
 			afterSha := commitSha(t, repoTemp)
 			if beforeSha == afterSha {
 				t.Log("build-edit loop made no changes, surprising")
@@ -219,19 +220,17 @@ func testMigrateRipgrep(t *testing.T, model string) {
 	repoURL := "https://github.com/dan-stowell/ripgrep"
 	targets := []string{
 		"//crates/matcher:grep_matcher",
-		/*
-			"//crates/matcher:integration_test",
-			"//crates/globset:globset",
-			"//crates/cli:grep_cli",
-			"//crates/regex:grep_regex",
-			"//crates/searcher:grep_searcher",
-			"//crates/pcre2:grep_pcre2",
-			"//crates/ignore:ignore",
-			"//crates/printer:grep_printer",
-			"//crates/grep:grep",
-			"//:ripgrep",
-			"//:integration_test",
-		*/
+		"//crates/matcher:integration_test",
+		"//crates/globset:globset",
+		"//crates/cli:grep_cli",
+		"//crates/regex:grep_regex",
+		"//crates/searcher:grep_searcher",
+		"//crates/pcre2:grep_pcre2",
+		"//crates/ignore:ignore",
+		"//crates/printer:grep_printer",
+		"//crates/grep:grep",
+		"//:ripgrep",
+		"//:integration_test",
 	}
 	testMigrateRepo(t, repoURL, model, targets)
 }

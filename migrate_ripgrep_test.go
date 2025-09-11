@@ -95,7 +95,9 @@ func buildEditLoop(t *testing.T, repoTemp, target, aider, aiderTemp, model strin
 			%s`,
 			target, target, bazelBuildOutput,
 		)
-		if aiderOutput, err := runAider(t, repoTemp, aider, aiderTemp, model, prompt); err != nil {
+		aiderOutput, err := runAider(t, repoTemp, aider, aiderTemp, model, prompt)
+		t.Logf("aider output:\n%s", aiderOutput)
+		if err != nil {
 			t.Fatalf("Error running aider (%s):\n%s", err, aiderOutput)
 		}
 	}

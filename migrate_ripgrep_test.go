@@ -62,6 +62,8 @@ func runAider(t *testing.T, dir, aider, aiderHome, model, prompt, file string) (
 	t.Logf("running aider with model %q", model)
 	cmd := exec.Command(
 		aider,
+		"--no-check-update",
+		"--no-show-release-notes",
 		"--model", model,
 		"--edit-format", "diff",
 		"--yes-always",
@@ -113,15 +115,16 @@ func ensureBuildBazelExists(t *testing.T, dir, target string) string {
 }
 
 func diffLastCommit(t *testing.T, dir string) []byte {
-	output, err := runCombined(dir, "git", "HEAD~1", "HEAD")
+	output, err := runCombined(dir, "git", "diff", "HEAD~1", "HEAD")
 	if err != nil {
-		t.Fatalf("Error diffing last commit: %s", err)
+		t.Fatalf("Error diffing last commit (%s):\n%s", err, output)
 	}
 	return output
 }
 
 func buildEditLoop(t *testing.T, repoTemp, target, aider, aiderTemp, model, buildBazelPath string) bool {
 	for attempt := uint(0); attempt < *attempts; attempt++ {
+		beforeSha := commitSha(t, repoTemp)
 		t.Logf("building target %q", target)
 		bazelBuildOutput, err := runCombined(repoTemp, "bazel", "build", target)
 		if err == nil {
@@ -142,7 +145,11 @@ func buildEditLoop(t *testing.T, repoTemp, target, aider, aiderTemp, model, buil
 		if aiderOutput, err := runAider(t, repoTemp, aider, aiderTemp, model, prompt, buildBazelPath); err != nil {
 			t.Fatalf("Error running aider (%s):\n%s", err, aiderOutput)
 		}
-		t.Logf("change(s) made by aider:\n%s", diffLastCommit(t, repoTemp))
+		afterSha := commitSha(t, repoTemp)
+		if beforeSha == afterSha {
+			t.Log("aider committed no changes")
+		}
+		t.Logf("changes made by aider:\n%s", diff(t, repoTemp, beforeSha, afterSha))
 	}
 
 	bazelBuildOutput, err := runCombined(repoTemp, "bazel", "build", target)
@@ -162,6 +169,16 @@ func commitSha(t *testing.T, dir string) string {
 		t.Fatalf("Could not find commit sha: %s", err)
 	}
 	return strings.TrimSpace(string(output))
+}
+
+func diff(t *testing.T, dir, left, right string) []byte {
+	cmd := exec.Command("git", "diff", left, right)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Error during git diff %q %q: %s", left, right, err)
+	}
+	return output
 }
 
 func diffFromSha(t *testing.T, dir, sha string) []byte {

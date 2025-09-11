@@ -26,21 +26,26 @@ func runCombined(dir, name string, args ...string) ([]byte, error) {
 }
 
 func gitClone(t *testing.T, repoURL, dest string) {
+	t.Logf("cloning %q", repoURL)
 	if _, err := runCombined("", "git", "clone", "--depth", "1", "--single-branch", repoURL, dest); err != nil {
-		t.Fatalf("failed to clone repo %q to %q: %s", repoURL, dest, err)
+		t.Fatalf("Failed to clone repo %q to %q: %s", repoURL, dest, err)
 	}
+	t.Logf("successfully cloned %q", repoURL)
 }
 
 func mkdirTemp(t *testing.T, pattern string) string {
+	t.Logf("making temp dir for %q", pattern)
 	temp, err := os.MkdirTemp("", pattern)
 	if err != nil {
 		t.Fatalf("Failed to create temp dir for pattern %q: %s", pattern, err)
 	}
 	t.Cleanup(func() { os.RemoveAll(temp) })
+	t.Logf("successfully made temp dir for %q", pattern)
 	return temp
 }
 
 func setupAider(t *testing.T) (string, string) {
+	t.Log("setting up aider")
 	aider, err := runfiles.Rlocation("_main/aider")
 	if err != nil {
 		t.Fatalf("Could not find aider: %s", err)
@@ -49,10 +54,12 @@ func setupAider(t *testing.T) (string, string) {
 		t.Fatalf("aider does not exist: %s", err)
 	}
 	aiderTemp := mkdirTemp(t, "aider")
+	t.Log("successfully set up aider")
 	return aider, aiderTemp
 }
 
 func runAider(t *testing.T, dir, aider, aiderHome, model, prompt, file string) ([]byte, error) {
+	t.Logf("running aider with model %q", model)
 	cmd := exec.Command(
 		aider,
 		"--model", model,
@@ -69,6 +76,7 @@ func runAider(t *testing.T, dir, aider, aiderHome, model, prompt, file string) (
 }
 
 func aiderCommit(t *testing.T, dir, aider, aiderHome, model string) {
+	t.Logf("committing code using aider and model %q", model)
 	cmd := exec.Command(
 		aider,
 		"--commit",
@@ -79,9 +87,11 @@ func aiderCommit(t *testing.T, dir, aider, aiderHome, model string) {
 	if _, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Could not commit with aider: %s", err)
 	}
+	t.Logf("successfully commited code using aider and model %q", model)
 }
 
 func ensureBuildBazelExists(t *testing.T, dir, target string) string {
+	t.Logf("ensuring BUILD.bazel exists for target %q", target)
 	targetDir := strings.TrimPrefix(strings.Split(target, ":")[0], "//")
 	if _, err := os.Stat(filepath.Join(dir, targetDir)); err != nil {
 		t.Fatalf("Directory %s for target %q does not exist: %s", targetDir, target, err)
@@ -98,16 +108,27 @@ func ensureBuildBazelExists(t *testing.T, dir, target string) string {
 	if err := f.Close(); err != nil {
 		t.Fatalf("Could not close %s: %s", buildBazelPath, err)
 	}
+	t.Logf("successfully ensured %q exists for target %q", filepath.Join(targetDir, "BUILD.bazel"), target)
 	return filepath.Join(targetDir, "BUILD.bazel")
+}
+
+func diffLastCommit(t *testing.T, dir string) []byte {
+	output, err := runCombined(dir, "git", "HEAD~1", "HEAD")
+	if err != nil {
+		t.Fatalf("Error diffing last commit: %s", err)
+	}
+	return output
 }
 
 func buildEditLoop(t *testing.T, repoTemp, target, aider, aiderTemp, model, buildBazelPath string) bool {
 	for attempt := uint(0); attempt < *attempts; attempt++ {
+		t.Logf("building target %q", target)
 		bazelBuildOutput, err := runCombined(repoTemp, "bazel", "build", target)
 		if err == nil {
 			t.Logf("bazel build %q succeeded, continuing to next target", target)
 			return true
 		}
+		t.Logf("bazel build %q did not succeed, invoking aider", target)
 		prompt := fmt.Sprintf(`
 			I would like to migrate this repo to build with Bazel.
 			I am working target-by-target.
@@ -118,11 +139,10 @@ func buildEditLoop(t *testing.T, repoTemp, target, aider, aiderTemp, model, buil
 			%s`,
 			target, buildBazelPath, target, bazelBuildOutput,
 		)
-		aiderOutput, err := runAider(t, repoTemp, aider, aiderTemp, model, prompt, buildBazelPath)
-		t.Logf("aider output:\n%s", aiderOutput)
-		if err != nil {
+		if aiderOutput, err := runAider(t, repoTemp, aider, aiderTemp, model, prompt, buildBazelPath); err != nil {
 			t.Fatalf("Error running aider (%s):\n%s", err, aiderOutput)
 		}
+		t.Logf("change(s) made by aider:\n%s", diffLastCommit(t, repoTemp))
 	}
 
 	bazelBuildOutput, err := runCombined(repoTemp, "bazel", "build", target)

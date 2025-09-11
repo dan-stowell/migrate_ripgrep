@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -9,12 +10,13 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bazelbuild/rules_go/go/runfiles"
 )
 
 var (
-	attempts = flag.Uint("attempts", 3, "number of attempts to build a target")
+	attempts = flag.Int("attempts", 3, "number of attempts to build a target")
 )
 
 func runCombined(dir, name string, args ...string) ([]byte, error) {
@@ -119,7 +121,7 @@ func ensureBuildBazelExists(t *testing.T, dir, target string) string {
 }
 
 func buildEditLoop(t *testing.T, repoTemp, target, aider, aiderTemp, model, buildBazelPath string) bool {
-	for attempt := uint(0); attempt < *attempts; attempt++ {
+	for attempt := 0; attempt < *attempts; attempt++ {
 		beforeSha := commitSha(t, repoTemp)
 		t.Logf("building target %q, sha %s", target, beforeSha)
 		bazelBuildOutput, err := runCombined(repoTemp, "bazel", "build", target)
@@ -216,24 +218,55 @@ func testMigrateRepo(t *testing.T, repoURL, model string, targets []string) {
 }
 
 func testMigrateRipgrep(t *testing.T, model string) {
-	repoURL := "https://github.com/dan-stowell/ripgrep"
-	targets := []string{
-		"//crates/matcher:grep_matcher",
-		"//crates/matcher:integration_test",
-		"//crates/globset:globset",
-		"//crates/cli:grep_cli",
-		"//crates/regex:grep_regex",
-		"//crates/searcher:grep_searcher",
-		"//crates/pcre2:grep_pcre2",
-		"//crates/ignore:ignore",
-		"//crates/printer:grep_printer",
-		"//crates/grep:grep",
-		"//:ripgrep",
-		"//:integration_test",
+	ctx, cancel := context.WithTimeout(context.Background(), 14*time.Minute)
+	defer cancel()
+	done := make(chan bool)
+	go func() {
+		repoURL := "https://github.com/dan-stowell/ripgrep"
+		targets := []string{
+			"//crates/matcher:grep_matcher",
+			"//crates/matcher:integration_test",
+			"//crates/globset:globset",
+			"//crates/cli:grep_cli",
+			"//crates/regex:grep_regex",
+			"//crates/searcher:grep_searcher",
+			"//crates/pcre2:grep_pcre2",
+			"//crates/ignore:ignore",
+			"//crates/printer:grep_printer",
+			"//crates/grep:grep",
+			"//:ripgrep",
+			"//:integration_test",
+		}
+		testMigrateRepo(t, repoURL, model, targets)
+		done <- true
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatalf("model %q timed out after 15 minutes", model)
 	}
-	testMigrateRepo(t, repoURL, model, targets)
 }
 
-func TestMigrateRipgrep(t *testing.T) {
+func TestGPT5(t *testing.T) {
 	testMigrateRipgrep(t, "openrouter/openai/gpt-5")
+}
+
+func TestGemini25Pro(t *testing.T) {
+	testMigrateRipgrep(t, "openrouter/google/gemini-2.5-pro")
+}
+
+func TestGrok4(t *testing.T) {
+	testMigrateRipgrep(t, "openrouter/x-ai/grok-4")
+}
+
+func TestO3(t *testing.T) {
+	testMigrateRipgrep(t, "openrouter/openai/o3")
+}
+
+func TestOpus41(t *testing.T) {
+	testMigrateRipgrep(t, "openrouter/anthropic/claude-opus-4.1")
+}
+
+func TestDeepseekR1(t *testing.T) {
+	testMigrateRipgrep(t, "openrouter/deepseek/deepseek-r1")
 }

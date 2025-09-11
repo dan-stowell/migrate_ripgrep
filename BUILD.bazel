@@ -1,6 +1,19 @@
 load("@rules_go//go:def.bzl", "go_test")
+load("@rules_python//python:defs.bzl", "py_binary")
 
 go_test(
 	name = "migrate_ripgrep_test",
 	srcs = ["migrate_ripgrep_test.go"],
+	deps = ["@rules_go//go/runfiles"],
+	data = [":aider"],
+	shard_count = 6,
+	timeout = "long",
+)
+
+py_binary(
+    name = "aider",
+    srcs = ["aider_wrapper.py"],
+    main = "aider_wrapper.py",
+    deps = ["@pip//aider_chat:pkg"],
+    visibility = ["//visibility:public"],
 )

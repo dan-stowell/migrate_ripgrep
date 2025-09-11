@@ -1,346 +1,187 @@
-package migrate_ripgrep_test
+package main_test
 
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/bazelbuild/rules_go/go/runfiles"
 )
 
-var model = flag.String("model", "openrouter/openai/gpt-4.1-mini", "The LLM model to use for testing")
+var (
+	attempts = flag.Uint("attempts", 3, "number of attempts to build a target")
+)
 
-var targets = []string{
-	"//crates/matcher:grep_matcher",
-	/*
-		"//crates/matcher:integration_test",
-		"//crates/globset:globset",
-		"//crates/cli:grep_cli",
-		"//crates/regex:grep_regex",
-		"//crates/searcher:grep_searcher",
-		"//crates/pcre2:grep_pcre2",
-		"//crates/ignore:ignore",
-		"//crates/printer:grep_printer",
-		"//crates/grep:grep",
-		"//:ripgrep",
-		"//:integration_test",
-	*/
-}
-
-// ensureBuildBazelExists creates an empty BUILD.bazel file if it doesn't exist.
-func ensureBuildBazelExists(worktreePath, target string) error {
-	// Parse target like //path/to/pkg:target or //:target
-	if !strings.HasPrefix(target, "//") {
-		// not a package-style target; nothing to do
-		return nil
-	}
-	s := strings.TrimPrefix(target, "//")
-	pkg := s
-	if idx := strings.Index(s, ":"); idx != -1 {
-		pkg = s[:idx]
-	}
-	var pkgPath string
-	if pkg == "" {
-		pkgPath = ""
-	} else {
-		pkgPath = pkg
-	}
-	buildPath := filepath.Join(worktreePath, pkgPath, "BUILD.bazel")
-	if _, err := os.Stat(buildPath); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("failed to stat %s: %w", buildPath, err)
-	}
-	dir := filepath.Dir(buildPath)
-	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create dir %s: %w", dir, err)
-		}
-	}
-	if err := os.WriteFile(buildPath, []byte("# created by migrate_ripgrep_test.go\n"), 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", buildPath, err)
-	}
-	log.Printf("Created %s", buildPath)
-	return nil
-}
-
-// gitStashAll stashes untracked and dirty files.
-func gitStashAll(worktreePath string) error {
-	// Stash untracked and dirty files so the next aider invocation starts clean.
-	stashCmd := exec.Command("git", "stash", "push", "-u", "-m", "aider-temp-stash")
-	stashCmd.Dir = worktreePath
-	out, err := stashCmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git stash failed in %s: %v\n%s", worktreePath, err, string(out))
-	}
-	// git stash prints a message even when there is nothing to stash;
-	// log the output for debugging but don't treat it as fatal.
-	log.Printf("git stash output in %s: %s", worktreePath, strings.TrimSpace(string(out)))
-	return nil
-}
-
-// Helper command runners and high-level wrappers.
-func runCombined(dir, name string, args ...string) (string, error) {
+func runCombined(dir, name string, args ...string) ([]byte, error) {
 	cmd := exec.Command(name, args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	return cmd.CombinedOutput()
 }
 
-func gitClone(repoURL, dest string) error {
-	_, err := runCombined("", "git", "clone", "--depth", "1", "--single-branch", repoURL, dest)
-	return err
+func gitClone(t *testing.T, repoURL, dest string) {
+	if _, err := runCombined("", "git", "clone", "--depth", "1", "--single-branch", repoURL, dest); err != nil {
+		t.Fatalf("failed to clone repo %q to %q: %s", repoURL, dest, err)
+	}
 }
 
-func gitBranch(dir, branchName string) error {
-	_, err := runCombined(dir, "git", "branch", branchName)
-	return err
+func mkdirTemp(t *testing.T, pattern string) string {
+	temp, err := os.MkdirTemp("", pattern)
+	if err != nil {
+		t.Fatalf("Failed to create temp dir for pattern %q: %s", pattern, err)
+	}
+	t.Cleanup(func() { os.RemoveAll(temp) })
+	return temp
 }
 
-func gitCheckout(dir, branchName string) error {
-	_, err := runCombined(dir, "git", "checkout", branchName)
-	return err
+func setupAider(t *testing.T) (string, string) {
+	aider, err := runfiles.Rlocation("_main/aider")
+	if err != nil {
+		t.Fatalf("Could not find aider: %s", err)
+	}
+	if _, err := os.Stat(aider); err != nil {
+		t.Fatalf("aider does not exist: %s", err)
+	}
+	aiderTemp := mkdirTemp(t, "aider")
+	return aider, aiderTemp
 }
 
-func bazelQuery(dir, target string) (string, error) {
-	return runCombined(dir, "bazel", "query", target)
-}
-
-func bazelBuild(dir, target string) (string, error) {
-	return runCombined(dir, "bazel", "build", target)
-}
-
-func runAider(aiderBin, dir, home, model, target, buildArg string) error {
-	args := []string{
-		"--disable-playwright",
-		"--yes-always",
+func runAider(t *testing.T, dir, aider, aiderHome, model, prompt string) ([]byte, error) {
+	cmd := exec.Command(
+		aider,
 		"--model", model,
 		"--edit-format", "diff",
-		"--auto-test",
-		"--test-cmd", "bazel build " + target,
-		"--message", "Please make the minimal Bazel file changes necessary to build " + target + ". Do not touch non-Bazel files.",
-		"MODULE.bazel",
-		buildArg,
-	}
-	cmd := exec.Command(aiderBin, args...)
+		"--yes-always",
+		"--disable-playwright",
+		"--message", prompt,
+	)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "HOME="+home)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("aider error: %v\n%s", err, string(out))
+	key, ok := os.LookupEnv("OPENROUTER_API_KEY")
+	if !ok {
+		t.Fatal("OPENROUTER_API_KEY not set")
 	}
-	return nil
+	cmd.Env = []string{
+		fmt.Sprintf("HOME=%q", aiderHome),
+		fmt.Sprintf("OPENROUTER_API_KEY=%q", key),
+	}
+	return cmd.CombinedOutput()
 }
 
-func gitAddAll(dir string) (string, error) {
-	return runCombined(dir, "git", "add", "-A")
+func aiderCommit(t *testing.T, dir, aider, aiderHome, model string) {
+	cmd := exec.Command(
+		aider,
+		"--commit",
+		"--model", model,
+	)
+	cmd.Dir = dir
+	key, ok := os.LookupEnv("OPENROUTER_API_KEY")
+	if !ok {
+		t.Fatal("OPENROUTER_API_KEY not set")
+	}
+	cmd.Env = []string{
+		fmt.Sprintf("HOME=%q", aiderHome),
+		fmt.Sprintf("OPENROUTER_API_KEY=%q", key),
+	}
+	if _, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Could not commit with aider: %s", err)
+	}
 }
 
-func gitStatusPorcelain(dir string) (string, error) {
-	out, err := runCombined(dir, "git", "status", "--porcelain")
-	return out, err
-}
-
-func gitCommit(dir, msg string) error {
-	_, err := runCombined(dir, "git", "commit", "-m", msg)
-	return err
-}
-
-func gitDiff(dir string) (string, error) {
-	return runCombined(dir, "git", "diff")
-}
-
-func setupTestMigrate(t *testing.T) (aiderBin, tempDir, aiderTempDir string) {
-	t.Helper()
-	flag.Parse()
-
-	aiderBin, err := runfiles.Rlocation("_main/aider")
-	if err != nil {
-		t.Fatal(err)
-	}
-	log.Printf("aider path: %s", aiderBin)
-
-	// Create a temporary directory for the git clone
-	tempDir, err = os.MkdirTemp("", "ripgrep-test-")
-	if err != nil {
-		t.Fatalf("Failed to create temporary directory: %v", err)
-	}
-	t.Cleanup(func() { os.RemoveAll(tempDir) }) // Clean up the temporary directory
-
-	aiderTempDir, err = os.MkdirTemp("", "aider-test-home-")
-	if err != nil {
-		t.Fatalf("Failed to create temporary directory for aider home: %v", err)
-	}
-	t.Cleanup(func() { os.RemoveAll(aiderTempDir) }) // Clean up the aider temporary directory
-
-	repoURL := "https://github.com/dan-stowell/ripgrep"
-	log.Printf("Cloning %s into %s", repoURL, tempDir)
-
-	// Clone the repository
-	log.Printf("Invoking git clone --depth 1 --single-branch %s %s", repoURL, tempDir)
-	if err := gitClone(repoURL, tempDir); err != nil {
-		t.Fatalf("Failed to clone repository: %v", err)
-	}
-	log.Printf("Completed git clone")
-
-	// Get the basename of the temporary directory to use as the branch name
-	branchName := filepath.Base(tempDir)
-	log.Printf("Invoking git branch %s in %s", branchName, tempDir)
-
-	// Create a new git branch
-	if err := gitBranch(tempDir, branchName); err != nil {
-		t.Fatalf("Failed to create branch %s: %v", branchName, err)
-	}
-	log.Printf("Completed git branch %s", branchName)
-
-	// Checkout the new branch
-	log.Printf("Invoking git checkout %s in %s", branchName, tempDir)
-	if err := gitCheckout(tempDir, branchName); err != nil {
-		t.Fatalf("Failed to checkout branch %s: %v", branchName, err)
-	}
-	log.Printf("Completed git checkout %s", branchName)
-
-	return aiderBin, tempDir, aiderTempDir
-}
-
-func attemptAiderBazelGit(aiderBin, tempDir, aiderTempDir, model, target, buildArg string, attempt, maxAttempts int, t *testing.T) bool {
-	log.Printf("Invoking aider for model %s target %s (attempt %d/%d)", model, target, attempt, maxAttempts)
-	if err := runAider(aiderBin, tempDir, aiderTempDir, model, target, buildArg); err != nil {
-		log.Printf("aider failed for model %s target %s: %v", model, target, err)
-		return false
-	}
-	log.Printf("Completed aider for model %s target %s (attempt %d/%d)", model, target, attempt, maxAttempts)
-
-	// After aider, first run 'bazel query' to check target visibility/resolution.
-	log.Printf("Invoking bazel query %s (model: %s, attempt %d/%d)", target, model, attempt, maxAttempts)
-	queryOut, queryErr := bazelQuery(tempDir, target)
-	if queryErr != nil {
-		log.Printf("bazel query failed for model %s target %s: %v\n%s", model, target, queryErr, queryOut)
-		return false
-	}
-	log.Printf("Completed bazel query %s (model: %s, attempt %d/%d)", target, model, attempt, maxAttempts)
-
-	// Query succeeded; attempt to build the target.
-	log.Printf("Invoking bazel build %s (model: %s, attempt %d/%d)", target, model, attempt, maxAttempts)
-	bazelOut, bazelErr := bazelBuild(tempDir, target)
-	if bazelErr != nil {
-		log.Printf("bazel build failed for model %s target %s: %v\n%s", model, target, bazelErr, bazelOut)
-		return false
-	}
-	log.Printf("Completed bazel build %s (model: %s, attempt %d/%d)", target, model, attempt, maxAttempts)
-
-	// Bazel build succeeded. Commit any untracked or dirty files and move on.
-	log.Printf("Invoking git add -A in %s", tempDir)
-	if out, err := gitAddAll(tempDir); err != nil {
-		t.Fatalf("git add failed in %s: %v\n%s", tempDir, err, out)
-	}
-	log.Printf("Completed git add -A")
-
-	log.Printf("Invoking git status --porcelain in %s", tempDir)
-	statusOut, err := gitStatusPorcelain(tempDir)
-	if err != nil {
-		t.Fatalf("git status failed in %s: %v", tempDir, err)
-	}
-	log.Printf("Completed git status --porcelain")
-
-	if strings.TrimSpace(string(statusOut)) == "" {
-		log.Printf("No changes to commit in %s for model %s target %s", tempDir, model, target)
-	} else {
-		commitMsg := fmt.Sprintf("aider: model %s target %s", model, target)
-		log.Printf("Invoking git commit -m \"%s\" in %s", commitMsg, tempDir)
-		if err := gitCommit(tempDir, commitMsg); err != nil {
-			t.Fatalf("git commit failed in %s: %v", tempDir, err)
-		}
-		log.Printf("Completed git commit -m \"%s\"", commitMsg)
-	}
-
-	log.Printf("bazel build succeeded for model %s target %s", model, target)
-	return true
-}
-
-func precheckBazelQueryAndBuild(tempDir, target, model string) bool {
-	log.Printf("Invoking bazel query %s (model: %s)", target, model)
-	queryOut, queryErr := bazelQuery(tempDir, target)
-	if queryErr == nil {
-		log.Printf("Completed bazel query %s (model: %s)", target, model)
-		// Query succeeded; try building directly.
-		log.Printf("Invoking bazel build %s (model: %s)", target, model)
-		bazelOut, bazelErr := bazelBuild(tempDir, target)
-		if bazelErr == nil {
-			log.Printf("Completed bazel build %s (model: %s)", target, model)
-			log.Printf("Pre-check: bazel query and build succeeded for model %s target %s; skipping aider", model, target)
+func buildEditLoop(t *testing.T, repoTemp, target, aider, aiderTemp, model string) bool {
+	for attempt := uint(0); attempt < *attempts; attempt++ {
+		bazelBuildOutput, err := runCombined(repoTemp, "bazel", "build", target)
+		if err == nil {
+			t.Logf("bazel build %q succeeded, continuing to next target", target)
 			return true
 		}
-		log.Printf("Pre-check: bazel build failed for model %s target %s: %v\n%s", model, target, bazelErr, bazelOut)
-		// Fall through to aider loop to attempt fixes.
-	} else {
-		log.Printf("Pre-check: bazel query failed for model %s target %s: %v\n%s", model, target, queryErr, queryOut)
-		// Fall through to aider loop to attempt fixes.
+		prompt := fmt.Sprintf(`
+			I would like to migrate this repo to build with Bazel.
+			I am working target-by-target.
+			Right now I am trying to get the %q target to build.
+			Can you make the minimal changes necessary to get this target to build?
+			Here is the output from the latest 'bazel build %s':
+
+			%s`,
+			target, target, bazelBuildOutput,
+		)
+		if _, err := runAider(t, repoTemp, aider, aiderTemp, model, prompt); err != nil {
+			t.Fatalf("Error running aider: %s", err)
+		}
 	}
+
+	bazelBuildOutput, err := runCombined(repoTemp, "bazel", "build", target)
+	if err == nil {
+		t.Logf("bazel build %q succeeded, continuing to next target", target)
+		return true
+	}
+	t.Logf("last bazel build %q failed, output:\n%s", target, bazelBuildOutput)
 	return false
 }
 
-func TestMigrate(t *testing.T) {
-	aiderBin, tempDir, aiderTempDir := setupTestMigrate(t)
+func commitSha(t *testing.T, dir string) string {
+	cmd := exec.Command("git", "rev-parse", "--short", "HEAD")
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Could not find commit sha: %s", err)
+	}
+	return strings.TrimSpace(string(output))
+}
 
+func diffFromSha(t *testing.T, dir, sha string) []byte {
+	cmd := exec.Command("git", "diff", sha, "HEAD")
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Error during git diff %q HEAD: %s", sha, err)
+	}
+	return output
+}
+
+func testMigrateRepo(t *testing.T, repoURL, model string, targets []string) {
+	aider, aiderTemp := setupAider(t)
+	repoTemp := mkdirTemp(t, regexp.MustCompile(`[^a-zA-Z0-9]+`).ReplaceAllString(repoURL, "-"))
+	gitClone(t, repoURL, repoTemp)
+	initialSha := commitSha(t, repoTemp)
 	for _, target := range targets {
-		testName := *model + target
-		t.Run(testName, func(t *testing.T) {
-			if err := ensureBuildBazelExists(tempDir, target); err != nil {
-				t.Fatalf("Error ensuring BUILD.bazel for target %s: %v", target, err)
-			}
-
-			// determine the BUILD.bazel path for the target to pass to aider
-			pkg := strings.TrimPrefix(target, "//")
-			if idx := strings.Index(pkg, ":"); idx != -1 {
-				pkg = pkg[:idx]
-			}
-			var buildArg string
-			if pkg == "" {
-				buildArg = "BUILD.bazel"
-			} else {
-				buildArg = filepath.Join(pkg, "BUILD.bazel")
-			}
-
-			// Pre-check: If bazel query then bazel build succeed without changes, skip aider.
-			if precheckBazelQueryAndBuild(tempDir, target, *model) {
-				return // move to next target
-			}
-
-			// Try up to N attempts per model/target using aider to produce Bazel changes.
-			const maxAttempts = 5
-			success := false
-			for attempt := 1; attempt <= maxAttempts; attempt++ {
-				if attemptAiderBazelGit(aiderBin, tempDir, aiderTempDir, *model, target, buildArg, attempt, maxAttempts, t) {
-					success = true
-					break // move to next target
-				}
-			}
-			var testFailed bool
-			if !success {
-				log.Printf("Maximum attempts (%d) reached for model %s target %s; test will fail.", maxAttempts, *model, target)
-				testFailed = true
-			}
-
-			// Print git diff at the end of each test case
-			log.Printf("Git diff for model %s target %s:", *model, target)
-			diffOut, err := gitDiff(tempDir)
-			if err != nil {
-				log.Printf("Failed to get git diff in %s: %v\n%s", tempDir, err, diffOut)
-			} else {
-				log.Printf("\n%s", diffOut)
-			}
-
-			if testFailed {
-				t.FailNow()
+		t.Run(model+target, func(t *testing.T) {
+			buildSucceeded := buildEditLoop(t, repoTemp, target, aider, aiderTemp, model)
+			aiderCommit(t, repoTemp, aider, aiderTemp, model)
+			diff := diffFromSha(t, repoTemp, initialSha)
+			t.Logf("Changes made in the build-edit loop:\n%s", diff)
+			if !buildSucceeded {
+				t.Fatalf("Could not build %q successfully", target)
 			}
 		})
 	}
+}
+
+func testMigrateRipgrep(t *testing.T, model string) {
+	repoURL := "https://github.com/dan-stowell/ripgrep"
+	targets := []string{
+		"//crates/matcher:grep_matcher",
+		/*
+			"//crates/matcher:integration_test",
+			"//crates/globset:globset",
+			"//crates/cli:grep_cli",
+			"//crates/regex:grep_regex",
+			"//crates/searcher:grep_searcher",
+			"//crates/pcre2:grep_pcre2",
+			"//crates/ignore:ignore",
+			"//crates/printer:grep_printer",
+			"//crates/grep:grep",
+			"//:ripgrep",
+			"//:integration_test",
+		*/
+	}
+	testMigrateRepo(t, repoURL, model, targets)
+}
+
+func TestMigrateRipgrepOpenAIGPT41Mini(t *testing.T) {
+	testMigrateRipgrep(t, "openrouter/openai/gpt-4.1-mini")
 }

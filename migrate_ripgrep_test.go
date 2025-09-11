@@ -125,7 +125,7 @@ func diffLastCommit(t *testing.T, dir string) []byte {
 func buildEditLoop(t *testing.T, repoTemp, target, aider, aiderTemp, model, buildBazelPath string) bool {
 	for attempt := uint(0); attempt < *attempts; attempt++ {
 		beforeSha := commitSha(t, repoTemp)
-		t.Logf("building target %q", target)
+		t.Logf("building target %q, sha %s", target, beforeSha)
 		bazelBuildOutput, err := runCombined(repoTemp, "bazel", "build", target)
 		if err == nil {
 			t.Logf("bazel build %q succeeded, continuing to next target", target)
@@ -146,6 +146,7 @@ func buildEditLoop(t *testing.T, repoTemp, target, aider, aiderTemp, model, buil
 			t.Fatalf("Error running aider (%s):\n%s", err, aiderOutput)
 		}
 		afterSha := commitSha(t, repoTemp)
+		t.Logf("successfully ran aider, sha %s", afterSha)
 		if beforeSha == afterSha {
 			t.Log("aider committed no changes")
 		}
@@ -195,14 +196,18 @@ func testMigrateRepo(t *testing.T, repoURL, model string, targets []string) {
 	aider, aiderTemp := setupAider(t)
 	repoTemp := mkdirTemp(t, regexp.MustCompile(`[^a-zA-Z0-9]+`).ReplaceAllString(repoURL, "-"))
 	gitClone(t, repoURL, repoTemp)
-	initialSha := commitSha(t, repoTemp)
 	for _, target := range targets {
 		t.Run(model+target, func(t *testing.T) {
+			beforeSha := commitSha(t, repoTemp)
 			buildBazelPath := ensureBuildBazelExists(t, repoTemp, target)
 			buildSucceeded := buildEditLoop(t, repoTemp, target, aider, aiderTemp, model, buildBazelPath)
 			aiderCommit(t, repoTemp, aider, aiderTemp, model)
-			diff := diffFromSha(t, repoTemp, initialSha)
-			t.Logf("Changes made in the build-edit loop:\n%s", diff)
+			afterSha := commitSha(t, repoTemp)
+			if beforeSha == afterSha {
+				t.Log("build-edit loop made no changes, surprising")
+			} else {
+				t.Logf("Changes made in the build-edit loop:\n%s", diff(t, repoTemp, beforeSha, afterSha))
+			}
 			if !buildSucceeded {
 				t.Fatalf("Could not build %q successfully", target)
 			}

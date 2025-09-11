@@ -61,14 +61,7 @@ func runAider(t *testing.T, dir, aider, aiderHome, model, prompt string) ([]byte
 		"--message", prompt,
 	)
 	cmd.Dir = dir
-	key, ok := os.LookupEnv("OPENROUTER_API_KEY")
-	if !ok {
-		t.Fatal("OPENROUTER_API_KEY not set")
-	}
-	cmd.Env = []string{
-		fmt.Sprintf("HOME=%q", aiderHome),
-		fmt.Sprintf("OPENROUTER_API_KEY=%q", key),
-	}
+	cmd.Env = append(os.Environ(), fmt.Sprintf("HOME=%q", aiderHome))
 	return cmd.CombinedOutput()
 }
 
@@ -79,14 +72,7 @@ func aiderCommit(t *testing.T, dir, aider, aiderHome, model string) {
 		"--model", model,
 	)
 	cmd.Dir = dir
-	key, ok := os.LookupEnv("OPENROUTER_API_KEY")
-	if !ok {
-		t.Fatal("OPENROUTER_API_KEY not set")
-	}
-	cmd.Env = []string{
-		fmt.Sprintf("HOME=%q", aiderHome),
-		fmt.Sprintf("OPENROUTER_API_KEY=%q", key),
-	}
+	cmd.Env = append(os.Environ(), fmt.Sprintf("HOME=%q", aiderHome))
 	if _, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Could not commit with aider: %s", err)
 	}
@@ -109,8 +95,8 @@ func buildEditLoop(t *testing.T, repoTemp, target, aider, aiderTemp, model strin
 			%s`,
 			target, target, bazelBuildOutput,
 		)
-		if _, err := runAider(t, repoTemp, aider, aiderTemp, model, prompt); err != nil {
-			t.Fatalf("Error running aider: %s", err)
+		if aiderOutput, err := runAider(t, repoTemp, aider, aiderTemp, model, prompt); err != nil {
+			t.Fatalf("Error running aider (%s):\n%s", err, aiderOutput)
 		}
 	}
 

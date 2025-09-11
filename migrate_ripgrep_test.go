@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -51,13 +52,15 @@ func setupAider(t *testing.T) (string, string) {
 	return aider, aiderTemp
 }
 
-func runAider(t *testing.T, dir, aider, aiderHome, model, prompt string) ([]byte, error) {
+func runAider(t *testing.T, dir, aider, aiderHome, model, prompt, file string) ([]byte, error) {
 	cmd := exec.Command(
 		aider,
 		"--model", model,
 		"--edit-format", "diff",
 		"--yes-always",
 		"--disable-playwright",
+		"--file", file,
+		"--read", "MODULE.bazel",
 		"--message", prompt,
 	)
 	cmd.Dir = dir
@@ -78,7 +81,27 @@ func aiderCommit(t *testing.T, dir, aider, aiderHome, model string) {
 	}
 }
 
-func buildEditLoop(t *testing.T, repoTemp, target, aider, aiderTemp, model string) bool {
+func ensureBuildBazelExists(t *testing.T, dir, target string) string {
+	targetDir := strings.TrimPrefix(strings.Split(target, ":")[0], "//")
+	if _, err := os.Stat(filepath.Join(dir, targetDir)); err != nil {
+		t.Fatalf("Directory %s for target %q does not exist: %s", targetDir, target, err)
+	}
+	buildBazelPath := filepath.Join(dir, targetDir, "BUILD.bazel")
+	_, err := os.Stat(buildBazelPath)
+	if err == nil {
+		return filepath.Join(targetDir, "BUILD.bazel")
+	}
+	f, err := os.Create(buildBazelPath)
+	if err != nil {
+		t.Fatalf("Could not create %s: %s", buildBazelPath, err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("Could not close %s: %s", buildBazelPath, err)
+	}
+	return filepath.Join(targetDir, "BUILD.bazel")
+}
+
+func buildEditLoop(t *testing.T, repoTemp, target, aider, aiderTemp, model, buildBazelPath string) bool {
 	for attempt := uint(0); attempt < *attempts; attempt++ {
 		bazelBuildOutput, err := runCombined(repoTemp, "bazel", "build", target)
 		if err == nil {
@@ -89,13 +112,13 @@ func buildEditLoop(t *testing.T, repoTemp, target, aider, aiderTemp, model strin
 			I would like to migrate this repo to build with Bazel.
 			I am working target-by-target.
 			Right now I am trying to get the %q target to build.
-			Can you make the minimal changes necessary to get this target to build?
+			Can you make the minimal changes to %q necessary to get this target to build?
 			Here is the output from the latest 'bazel build %s':
 
 			%s`,
-			target, target, bazelBuildOutput,
+			target, buildBazelPath, target, bazelBuildOutput,
 		)
-		aiderOutput, err := runAider(t, repoTemp, aider, aiderTemp, model, prompt)
+		aiderOutput, err := runAider(t, repoTemp, aider, aiderTemp, model, prompt, buildBazelPath)
 		t.Logf("aider output:\n%s", aiderOutput)
 		if err != nil {
 			t.Fatalf("Error running aider (%s):\n%s", err, aiderOutput)
@@ -138,7 +161,8 @@ func testMigrateRepo(t *testing.T, repoURL, model string, targets []string) {
 	initialSha := commitSha(t, repoTemp)
 	for _, target := range targets {
 		t.Run(model+target, func(t *testing.T) {
-			buildSucceeded := buildEditLoop(t, repoTemp, target, aider, aiderTemp, model)
+			buildBazelPath := ensureBuildBazelExists(t, repoTemp, target)
+			buildSucceeded := buildEditLoop(t, repoTemp, target, aider, aiderTemp, model, buildBazelPath)
 			aiderCommit(t, repoTemp, aider, aiderTemp, model)
 			diff := diffFromSha(t, repoTemp, initialSha)
 			t.Logf("Changes made in the build-edit loop:\n%s", diff)

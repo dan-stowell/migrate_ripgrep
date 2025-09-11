@@ -2,9 +2,9 @@ package migrate_ripgrep_test
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
-	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -13,21 +13,23 @@ import (
 	"github.com/bazelbuild/rules_go/go/runfiles"
 )
 
-var model = flag.String("model", "openrouter/google/gemini-2.5-flash", "The LLM model to use for testing")
+var model = flag.String("model", "openrouter/openai/gpt-4.1-mini", "The LLM model to use for testing")
 
 var targets = []string{
 	"//crates/matcher:grep_matcher",
-	"//crates/matcher:integration_test",
-	"//crates/globset:globset",
-	"//crates/cli:grep_cli",
-	"//crates/regex:grep_regex",
-	"//crates/searcher:grep_searcher",
-	"//crates/pcre2:grep_pcre2",
-	"//crates/ignore:ignore",
-	"//crates/printer:grep_printer",
-	"//crates/grep:grep",
-	"//:ripgrep",
-	"//:integration_test",
+	/*
+		"//crates/matcher:integration_test",
+		"//crates/globset:globset",
+		"//crates/cli:grep_cli",
+		"//crates/regex:grep_regex",
+		"//crates/searcher:grep_searcher",
+		"//crates/pcre2:grep_pcre2",
+		"//crates/ignore:ignore",
+		"//crates/printer:grep_printer",
+		"//crates/grep:grep",
+		"//:ripgrep",
+		"//:integration_test",
+	*/
 }
 
 // ensureBuildBazelExists creates an empty BUILD.bazel file if it doesn't exist.

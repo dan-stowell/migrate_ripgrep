@@ -194,6 +194,6 @@ func testMigrateRipgrep(t *testing.T, model string) {
 	testMigrateRepo(t, repoURL, model, targets)
 }
 
-func TestMigrateRipgrepOpenAIGPT41Mini(t *testing.T) {
-	testMigrateRipgrep(t, "openrouter/openai/gpt-4.1-mini")
+func TestMigrateRipgrep(t *testing.T) {
+	testMigrateRipgrep(t, "openrouter/openai/gpt-5")
 }

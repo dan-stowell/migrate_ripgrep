@@ -59,6 +59,27 @@ func gitBranch(t *testing.T, model, dir string) string {
 	return branch
 }
 
+func setupGitAuthor(t *testing.T, model, dir string) {
+	t.Logf("setting up git author for %q", model)
+	authorName := fmt.Sprintf("Dan Stowell (migrate_ripgrep_test %q)", model)
+	if _, err := runCombined(dir, "git", "config", "user.name", authorName); err != nil {
+		t.Fatalf("Could not set author name %s: %s", authorName, err)
+	}
+	authorEmail := "dan@buildbuddy.io"
+	if _, err := runCombined(dir, "git", "config", "user.email", authorEmail); err != nil {
+		t.Fatalf("Could not set author email %s: %s", authorEmail, err)
+	}
+	t.Logf("successfully set author for %q", model)
+}
+
+func gitPush(t *testing.T, dir, branch string) {
+	t.Logf("pushing branch %q", branch)
+	if _, err := runCombined(dir, "git", "push", "origin", branch); err != nil {
+		t.Fatalf("could not git push %q: %s", branch, err)
+	}
+	t.Logf("successfully pushed branch %q", branch)
+}
+
 func mkdirTemp(t *testing.T, pattern string) string {
 	t.Logf("making temp dir for %q", pattern)
 	temp, err := os.MkdirTemp("", pattern)
@@ -144,7 +165,7 @@ func ensureBuildBazelExists(t *testing.T, dir, target string) string {
 	return filepath.Join(targetDir, "BUILD.bazel")
 }
 
-func buildEditLoop(t *testing.T, repoTemp, target, aider, aiderTemp, model, buildBazelPath string) bool {
+func buildEditLoop(t *testing.T, repoTemp, target, aider, aiderTemp, model, buildBazelPath, branch string) bool {
 	for attempt := 0; attempt < *attempts; attempt++ {
 		beforeSha := commitSha(t, repoTemp)
 		t.Logf("building target %q, sha %s", target, beforeSha)
@@ -173,6 +194,7 @@ func buildEditLoop(t *testing.T, repoTemp, target, aider, aiderTemp, model, buil
 			t.Log("aider committed no changes")
 		}
 		t.Logf("changes made by aider:\n%s", diff(t, repoTemp, beforeSha, afterSha))
+		gitPush(t, repoTemp, branch)
 	}
 
 	bazelBuildOutput, err := runCombined(repoTemp, "bazel", "build", target)
@@ -221,14 +243,16 @@ func testMigrateRepo(t *testing.T, repoURL, model string, targets []string) {
 	aider, aiderTemp := setupAider(t)
 	repoTemp := mkdirTemp(t, regexp.MustCompile(`[^a-zA-Z0-9]+`).ReplaceAllString(repoURL, "-"))
 	gitClone(t, repoURL, repoTemp)
-	gitBranch(t, model, repoTemp)
+	branch := gitBranch(t, model, repoTemp)
+	setupGitAuthor(t, model, repoTemp)
 	for _, target := range targets {
 		t.Logf("Migrating %q in %q with model %q", target, repoURL, model)
 		beforeSha := commitSha(t, repoTemp)
 		buildBazelPath := ensureBuildBazelExists(t, repoTemp, target)
-		buildSucceeded := buildEditLoop(t, repoTemp, target, aider, aiderTemp, model, buildBazelPath)
+		buildSucceeded := buildEditLoop(t, repoTemp, target, aider, aiderTemp, model, buildBazelPath, branch)
 		if !isRepoClean(t, repoTemp) {
 			aiderCommit(t, repoTemp, aider, aiderTemp, model)
+			gitPush(t, repoTemp, branch)
 		}
 		afterSha := commitSha(t, repoTemp)
 		if beforeSha == afterSha {

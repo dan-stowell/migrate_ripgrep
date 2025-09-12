@@ -51,7 +51,7 @@ func gitClone(t *testing.T, repoURL, dest string) {
 func gitBranch(t *testing.T, model, dir string) string {
 	t.Log("checking out fresh git branch")
 	ts := time.Now().UTC().Format("2006-01-02T15-04-05Z")
-	branch := model + "-" + ts
+	branch := "test-" + model + "-" + ts
 	if _, err := runCombined(dir, "git", "checkout", "-b", branch); err != nil {
 		t.Fatalf("Could not checkout branch %q: %s", branch, err)
 	}

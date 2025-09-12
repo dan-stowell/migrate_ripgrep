@@ -6,8 +6,8 @@ go_test(
 	srcs = ["migrate_ripgrep_test.go"],
 	deps = ["@rules_go//go/runfiles"],
 	data = [":aider"],
-	shard_count = 6,
-	timeout = "long",
+	shard_count = 10,
+	timeout = "eternal",
 )
 
 py_binary(

@@ -285,6 +285,45 @@ func testMigrateRipgrep(t *testing.T, model string) {
 	testMigrateRepo(t, repoURL, model, targets)
 }
 
-func TestGPT5Mini(t *testing.T) {
-	testMigrateRipgrep(t, "openrouter/openai/gpt-5-mini")
+// https://openrouter.ai/models?categories=programming&fmt=cards&order=pricing-low-to-high
+// as of 2025-09-12
+
+func TestSonomaDuskAlpha(t *testing.T) {
+	testMigrateRipgrep(t, "openrouter/openrouter/sonoma-dusk-alpha")
+}
+
+func TestSonomaSkyAlpha(t *testing.T) {
+	testMigrateRipgrep(t, "openrouter/openrouter/sonoma-sky-alpha")
+}
+
+func TestDeepseekV31(t *testing.T) {
+	testMigrateRipgrep(t, "openrouter/deepseek/deepseek-chat-v3.1")
+}
+
+func TestQwen3Coder(t *testing.T) {
+	testMigrateRipgrep(t, "openrouter/qwen/qwen3-coder")
+}
+
+func TestGrokCodeFast1(t *testing.T) {
+	testMigrateRipgrep(t, "openrouter/x-ai/grok-code-fast-1")
+}
+
+func TestGemini25Flash(t *testing.T) {
+	testMigrateRipgrep(t, "openrouter/google/gemini-2.5-flash")
+}
+
+func TestGPT41Mini(t *testing.T) {
+	testMigrateRipgrep(t, "openrouter/openai/gpt-4.1-mini")
+}
+
+func TestGPT5(t *testing.T) {
+	testMigrateRipgrep(t, "openrouter/openai/gpt-5")
+}
+
+func TestGemini25Pro(t *testing.T) {
+	testMigrateRipgrep(t, "openrouter/google/gemini-2.5-pro")
+}
+
+func TestSonnet4(t *testing.T) {
+	testMigrateRipgrep(t, "openrouter/anthropic/claude-sonnet-4")
 }
